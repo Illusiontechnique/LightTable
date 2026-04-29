@@ -80,26 +80,63 @@ func apply_cinematic_ui():
 	cam_preview_panel.modulate = Color(0.95, 0.99, 1.0, 1.0)
 	output_preview_panel.modulate = Color(0.95, 0.99, 1.0, 1.0)
 
+func create_dashboard_section(parent: VBoxContainer, title_text: String, accent: Color) -> VBoxContainer:
+	var card = PanelContainer.new()
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var card_style = StyleBoxFlat.new()
+	card_style.bg_color = Color(0.015, 0.02, 0.03, 0.94)
+	card_style.corner_radius_top_left = 14
+	card_style.corner_radius_top_right = 14
+	card_style.corner_radius_bottom_left = 14
+	card_style.corner_radius_bottom_right = 14
+	card_style.border_width_left = 1
+	card_style.border_width_top = 1
+	card_style.border_width_right = 1
+	card_style.border_width_bottom = 1
+	card_style.border_color = accent
+	card_style.shadow_color = Color(accent.r, accent.g, accent.b, 0.12)
+	card_style.shadow_size = 4
+	card_style.content_margin_left = 14
+	card_style.content_margin_top = 12
+	card_style.content_margin_right = 14
+	card_style.content_margin_bottom = 14
+	card.add_theme_stylebox_override("panel", card_style)
+	parent.add_child(card)
+
+	var content = VBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_theme_constant_override("separation", 8)
+	card.add_child(content)
+
+	var heading = Label.new()
+	heading.text = title_text
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	heading.add_theme_font_size_override("font_size", 13)
+	heading.modulate = accent
+	content.add_child(heading)
+
+	return content
+
 func add_instruction_overlay():
 	show_welcome_screen()
 
 func setup_audio_ui():
 	var btn_container = $UI/DevDashboard/HSplit/CamPreview/VBox/Controls/VBox
+	btn_container.add_theme_constant_override("separation", 12)
 
-	var spacer = Control.new()
-	spacer.custom_minimum_size = Vector2(0, 8)
-	btn_container.add_child(spacer)
+	var audio_section = create_dashboard_section(btn_container, "AUDIO SENSOR", Color(0.8, 0.95, 1.0, 0.75))
 
 	var audio_label = Label.new()
-	audio_label.text = "-- AUDIO SENSOR --"
+	audio_label.text = "Mic input / normalized drive"
 	audio_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	audio_label.modulate = Color(0.8, 0.95, 1.0)
-	btn_container.add_child(audio_label)
+	audio_section.add_child(audio_label)
 
 	audio_meter_label = Label.new()
 	audio_meter_label.text = "Mic: initializing..."
 	audio_meter_label.modulate = Color(0.9, 0.98, 1.0)
-	btn_container.add_child(audio_meter_label)
+	audio_section.add_child(audio_meter_label)
 
 	audio_meter_bar = ProgressBar.new()
 	audio_meter_bar.min_value = 0.0
@@ -107,18 +144,14 @@ func setup_audio_ui():
 	audio_meter_bar.value = 0.0
 	audio_meter_bar.show_percentage = false
 	audio_meter_bar.custom_minimum_size = Vector2(0, 18)
-	btn_container.add_child(audio_meter_bar)
+	audio_section.add_child(audio_meter_bar)
 
-	var range_label = Label.new()
-	range_label.text = "-- MIC RANGE --"
-	range_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	range_label.modulate = Color(0.8, 0.95, 1.0)
-	btn_container.add_child(range_label)
+	var range_section = create_dashboard_section(btn_container, "MIC RANGE", Color(1.0, 0.85, 0.45, 0.75))
 
 	audio_floor_label = Label.new()
 	audio_floor_label.text = "Floor: " + str(snapped(audio_input_floor, 0.001))
 	audio_floor_label.modulate = Color(0.9, 0.95, 1.0)
-	btn_container.add_child(audio_floor_label)
+	range_section.add_child(audio_floor_label)
 
 	audio_floor_slider = HSlider.new()
 	audio_floor_slider.min_value = 0.0
@@ -127,12 +160,12 @@ func setup_audio_ui():
 	audio_floor_slider.value = audio_input_floor
 	audio_floor_slider.custom_minimum_size = Vector2(0, 20)
 	audio_floor_slider.value_changed.connect(_on_audio_floor_changed)
-	btn_container.add_child(audio_floor_slider)
+	range_section.add_child(audio_floor_slider)
 
 	audio_ceiling_label = Label.new()
 	audio_ceiling_label.text = "Ceiling: " + str(snapped(audio_input_ceiling, 0.001))
 	audio_ceiling_label.modulate = Color(0.9, 0.95, 1.0)
-	btn_container.add_child(audio_ceiling_label)
+	range_section.add_child(audio_ceiling_label)
 
 	audio_ceiling_slider = HSlider.new()
 	audio_ceiling_slider.min_value = 0.0
@@ -141,17 +174,13 @@ func setup_audio_ui():
 	audio_ceiling_slider.value = audio_input_ceiling
 	audio_ceiling_slider.custom_minimum_size = Vector2(0, 20)
 	audio_ceiling_slider.value_changed.connect(_on_audio_ceiling_changed)
-	btn_container.add_child(audio_ceiling_slider)
+	range_section.add_child(audio_ceiling_slider)
 
 	var reset_range_btn = Button.new()
 	reset_range_btn.text = "Reset Mic Range"
+	reset_range_btn.custom_minimum_size = Vector2(0, 34)
 	reset_range_btn.pressed.connect(_reset_audio_range)
-	btn_container.add_child(reset_range_btn)
-
-	var reopen_btn = Button.new()
-	reopen_btn.text = "Show Welcome"
-	reopen_btn.pressed.connect(show_welcome_screen)
-	btn_container.add_child(reopen_btn)
+	range_section.add_child(reset_range_btn)
 
 func setup_audio_sensor():
 	ProjectSettings.set_setting("audio/driver/enable_input", true)
@@ -321,33 +350,24 @@ func _reset_audio_range():
 
 func setup_scene_buttons():
 	var btn_container = $UI/DevDashboard/HSplit/CamPreview/VBox/Controls/VBox
+	btn_container.add_theme_constant_override("separation", 12)
 	
 	# Add Camera Control Buttons
-	var camera_label = Label.new()
-	camera_label.text = "-- HARDWARE --"
-	camera_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	camera_label.modulate = Color(0.65, 0.95, 1.0)
-	btn_container.add_child(camera_label)
+	var hardware_section = create_dashboard_section(btn_container, "HARDWARE", Color(0.65, 0.95, 1.0, 0.75))
 
 	var restart_cam_btn = Button.new()
 	restart_cam_btn.text = "Restart CV Layer"
+	restart_cam_btn.custom_minimum_size = Vector2(0, 34)
 	restart_cam_btn.pressed.connect(_on_restart_cam_pressed)
-	btn_container.add_child(restart_cam_btn)
+	hardware_section.add_child(restart_cam_btn)
 
 	var welcome_btn = Button.new()
 	welcome_btn.text = "Show Welcome"
+	welcome_btn.custom_minimum_size = Vector2(0, 34)
 	welcome_btn.pressed.connect(show_welcome_screen)
-	btn_container.add_child(welcome_btn)
+	hardware_section.add_child(welcome_btn)
 
-	var spacer = Control.new()
-	spacer.custom_minimum_size = Vector2(0, 10)
-	btn_container.add_child(spacer)
-
-	var scene_label = Label.new()
-	scene_label.text = "-- SCENES --"
-	scene_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	scene_label.modulate = Color(1.0, 0.88, 0.55)
-	btn_container.add_child(scene_label)
+	var scene_section = create_dashboard_section(btn_container, "SCENES", Color(1.0, 0.88, 0.55, 0.75))
 	
 	var scenes = {
 		"Water": "res://scripts/content/water_scene.gd",
@@ -360,8 +380,9 @@ func setup_scene_buttons():
 	for s_name in scenes:
 		var btn = Button.new()
 		btn.text = "Load " + s_name
+		btn.custom_minimum_size = Vector2(0, 34)
 		btn.pressed.connect(load_content_scene.bind(scenes[s_name]))
-		btn_container.add_child(btn)
+		scene_section.add_child(btn)
 
 func load_content_scene(script_path: String):
 	if active_scene:
