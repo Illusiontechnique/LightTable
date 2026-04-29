@@ -15,5 +15,7 @@ if %ERRORLEVEL% NEQ 0 (
     echo.
     echo [ERROR] Godot executable not found in PATH.
     echo Please open the project manually in Godot and press F5.
+    pause
 )
-pause
+:: No pause here to allow the script to finish naturally when Godot closes
+exit
