@@ -4,6 +4,9 @@ extends Node2D
 @onready var background = $Background
 @onready var interaction_container = $Interactions
 @onready var dev_dashboard = $UI/DevDashboard
+@onready var cam_preview_panel = $UI/DevDashboard/HSplit/CamPreview
+@onready var output_preview_panel = $UI/DevDashboard/HSplit/OutputPreview
+@onready var console_panel = $UI/DevDashboard/Console
 @onready var log_text = $UI/DevDashboard/Console/LogText
 @onready var cam_rect = $UI/DevDashboard/HSplit/CamPreview/VBox/CamRect
 @onready var hand_points_container = $UI/DevDashboard/HSplit/CamPreview/VBox/CamRect/HandPoints
@@ -25,33 +28,69 @@ func _ready():
 	
 	# Scene Selection Buttons
 	setup_scene_buttons()
+	apply_cinematic_ui()
 	
 	# Dev Dashboard toggle
 	dev_dashboard.visible = true # Start with dashboard for dev
 	dev_dashboard.modulate = Color(1, 1, 1, 0.82)
 	log_message("System Ready. Press Load Water to begin.")
 
+func apply_cinematic_ui():
+	var panel_style = StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.03, 0.05, 0.08, 0.88)
+	panel_style.corner_radius_top_left = 18
+	panel_style.corner_radius_top_right = 18
+	panel_style.corner_radius_bottom_left = 18
+	panel_style.corner_radius_bottom_right = 18
+	panel_style.border_width_left = 1
+	panel_style.border_width_top = 1
+	panel_style.border_width_right = 1
+	panel_style.border_width_bottom = 1
+	panel_style.border_color = Color(0.20, 0.88, 1.0, 0.55)
+	panel_style.shadow_color = Color(0.0, 0.7, 1.0, 0.2)
+	panel_style.shadow_size = 8
+
+	cam_preview_panel.add_theme_stylebox_override("panel", panel_style)
+	output_preview_panel.add_theme_stylebox_override("panel", panel_style)
+	console_panel.add_theme_stylebox_override("panel", panel_style)
+
+	cam_rect.color = Color(0.03, 0.08, 0.14, 1.0)
+	log_text.modulate = Color(0.92, 0.98, 1.0, 1.0)
+	cam_preview_panel.modulate = Color(0.95, 0.99, 1.0, 1.0)
+	output_preview_panel.modulate = Color(0.95, 0.99, 1.0, 1.0)
+
 func add_instruction_overlay():
 	var panel = PanelContainer.new()
 	panel.name = "WelcomeBox"
-	panel.modulate.a = 0.9
+	panel.modulate = Color(1, 1, 1, 0.94)
 	panel.position = Vector2(50, 50)
 	panel.size = Vector2(350, 200)
 	
 	var style = StyleBoxFlat.new()
-	style.bg_color = Color(0, 0, 0, 0.7)
-	style.corner_radius_top_left = 10
-	style.corner_radius_bottom_right = 10
+	style.bg_color = Color(0.02, 0.04, 0.07, 0.88)
+	style.corner_radius_top_left = 18
+	style.corner_radius_top_right = 18
+	style.corner_radius_bottom_left = 18
+	style.corner_radius_bottom_right = 18
+	style.border_width_left = 1
+	style.border_width_top = 1
+	style.border_width_right = 1
+	style.border_width_bottom = 1
+	style.border_color = Color(0.3, 0.95, 1.0, 0.75)
+	style.shadow_color = Color(0.0, 0.7, 1.0, 0.35)
+	style.shadow_size = 10
 	panel.add_theme_stylebox_override("panel", style)
 	
 	var label = RichTextLabel.new()
 	label.bbcode_enabled = true
-	label.text = "[center][b][color=aqua]LIGHT TABLE v1.0[/color][/b][/center]\n\n" + \
-				 "[color=yellow]TAB[/color] - Toggle Dev/Projector Mode\n" + \
-				 "[color=yellow]ESC[/color] - Exit Application\n\n" + \
-				 "1. Click [b]Load Water[/b]\n" + \
-				 "2. Calibrate Cam (TL, TR, BR, BL)\n" + \
-				 "3. Move hands to interact!"
+	label.text = "[center][b][color=cyan]LIGHT TABLE[/color][/b][/center]\n" + \
+				 "[center][color=white]cinematic projector mode[/color][/center]\n\n" + \
+				 "[color=gold]TAB[/color]  toggle dashboard\n" + \
+				 "[color=gold]ESC[/color]  exit app\n\n" + \
+				 "[color=white]1.[/color] Load a scene\n" + \
+				 "[color=white]2.[/color] Calibrate corners\n" + \
+				 "[color=white]3.[/color] Move hands over the surface"
+	label.modulate = Color(1, 1, 1, 0.98)
 	
 	panel.add_child(label)
 	$UI.add_child(panel)
@@ -63,6 +102,7 @@ func setup_scene_buttons():
 	var camera_label = Label.new()
 	camera_label.text = "-- HARDWARE --"
 	camera_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	camera_label.modulate = Color(0.65, 0.95, 1.0)
 	btn_container.add_child(camera_label)
 
 	var restart_cam_btn = Button.new()
@@ -77,6 +117,7 @@ func setup_scene_buttons():
 	var scene_label = Label.new()
 	scene_label.text = "-- SCENES --"
 	scene_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	scene_label.modulate = Color(1.0, 0.88, 0.55)
 	btn_container.add_child(scene_label)
 	
 	var scenes = {
