@@ -33,7 +33,9 @@ class LightTableCV:
             "id": id,
             "x": float(norm_x),
             "y": float(norm_y),
-            "state": state
+            "state": state,
+            "raw_x": float(x),
+            "raw_y": float(y)
         })
 
     def on_mouse(self, event, x, y, flags, param):
