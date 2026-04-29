@@ -268,7 +268,8 @@ func setup_scene_buttons():
 		"Water": "res://scripts/content/water_scene.gd",
 		"Piano": "res://scripts/content/piano_scene.gd",
 		"Alphabet": "res://scripts/content/alphabet_puzzle.gd",
-		"Balloons": "res://scripts/content/balloons_scene.gd"
+		"Balloons": "res://scripts/content/balloons_scene.gd",
+		"Bug": "res://scripts/content/bug_scene.gd"
 	}
 	
 	for s_name in scenes:
