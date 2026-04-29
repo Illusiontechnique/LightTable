@@ -14,6 +14,12 @@ extends Node2D
 
 var active_scene = null
 var simulation_mode = true
+var audio_level := 0.0
+var welcome_overlay: Control
+var welcome_status_label: Label
+var welcome_timer := 0.0
+var audio_meter_bar: ProgressBar
+var audio_meter_label: Label
 
 # Simple interaction visualizer (circles that appear at hand positions)
 func _ready():
@@ -23,17 +29,25 @@ func _ready():
 	
 	sim_toggle.toggled.connect(_on_sim_toggled)
 	
-	# Add Instruction Overlay
-	add_instruction_overlay()
-	
 	# Scene Selection Buttons
 	setup_scene_buttons()
+	setup_audio_ui()
+	setup_audio_sensor()
 	apply_cinematic_ui()
+	show_welcome_screen()
 	
 	# Dev Dashboard toggle
 	dev_dashboard.visible = true # Start with dashboard for dev
 	dev_dashboard.modulate = Color(1, 1, 1, 0.82)
 	log_message("System Ready. Press Load Water to begin.")
+
+func _process(delta):
+	welcome_timer += delta
+	update_audio_sensor()
+	if active_scene and active_scene.has_method("set_audio_level"):
+		active_scene.call("set_audio_level", audio_level)
+	if welcome_overlay and is_instance_valid(welcome_overlay) and welcome_timer > 2.75:
+		dismiss_welcome_screen()
 
 func apply_cinematic_ui():
 	var panel_style = StyleBoxFlat.new()
@@ -60,40 +74,165 @@ func apply_cinematic_ui():
 	output_preview_panel.modulate = Color(0.95, 0.99, 1.0, 1.0)
 
 func add_instruction_overlay():
-	var panel = PanelContainer.new()
-	panel.name = "WelcomeBox"
-	panel.modulate = Color(1, 1, 1, 0.94)
-	panel.position = Vector2(50, 50)
-	panel.size = Vector2(350, 200)
-	
-	var style = StyleBoxFlat.new()
-	style.bg_color = Color(0.02, 0.04, 0.07, 0.88)
-	style.corner_radius_top_left = 18
-	style.corner_radius_top_right = 18
-	style.corner_radius_bottom_left = 18
-	style.corner_radius_bottom_right = 18
-	style.border_width_left = 1
-	style.border_width_top = 1
-	style.border_width_right = 1
-	style.border_width_bottom = 1
-	style.border_color = Color(0.3, 0.95, 1.0, 0.75)
-	style.shadow_color = Color(0.0, 0.7, 1.0, 0.35)
-	style.shadow_size = 10
-	panel.add_theme_stylebox_override("panel", style)
-	
-	var label = RichTextLabel.new()
-	label.bbcode_enabled = true
-	label.text = "[center][b][color=cyan]LIGHT TABLE[/color][/b][/center]\n" + \
-				 "[center][color=white]cinematic projector mode[/color][/center]\n\n" + \
-				 "[color=gold]TAB[/color]  toggle dashboard\n" + \
-				 "[color=gold]ESC[/color]  exit app\n\n" + \
-				 "[color=white]1.[/color] Load a scene\n" + \
-				 "[color=white]2.[/color] Calibrate corners\n" + \
-				 "[color=white]3.[/color] Move hands over the surface"
-	label.modulate = Color(1, 1, 1, 0.98)
-	
-	panel.add_child(label)
-	$UI.add_child(panel)
+	show_welcome_screen()
+
+func setup_audio_ui():
+	var btn_container = $UI/DevDashboard/HSplit/CamPreview/VBox/Controls/VBox
+
+	var spacer = Control.new()
+	spacer.custom_minimum_size = Vector2(0, 8)
+	btn_container.add_child(spacer)
+
+	var audio_label = Label.new()
+	audio_label.text = "-- AUDIO SENSOR --"
+	audio_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	audio_label.modulate = Color(0.8, 0.95, 1.0)
+	btn_container.add_child(audio_label)
+
+	audio_meter_label = Label.new()
+	audio_meter_label.text = "Mic: initializing..."
+	audio_meter_label.modulate = Color(0.9, 0.98, 1.0)
+	btn_container.add_child(audio_meter_label)
+
+	audio_meter_bar = ProgressBar.new()
+	audio_meter_bar.min_value = 0.0
+	audio_meter_bar.max_value = 1.0
+	audio_meter_bar.value = 0.0
+	audio_meter_bar.show_percentage = false
+	audio_meter_bar.custom_minimum_size = Vector2(0, 18)
+	btn_container.add_child(audio_meter_bar)
+
+	var reopen_btn = Button.new()
+	reopen_btn.text = "Show Welcome"
+	reopen_btn.pressed.connect(show_welcome_screen)
+	btn_container.add_child(reopen_btn)
+
+func setup_audio_sensor():
+	ProjectSettings.set_setting("audio/driver/enable_input", true)
+	var error_code = AudioServer.set_input_device_active(true)
+	if error_code == OK:
+		audio_meter_label.text = "Mic: active"
+		log_message("Audio input enabled.")
+	else:
+		audio_meter_label.text = "Mic: unavailable"
+		log_message("Audio input could not be enabled.")
+
+func show_welcome_screen():
+	if welcome_overlay and is_instance_valid(welcome_overlay):
+		welcome_overlay.queue_free()
+
+	welcome_overlay = Control.new()
+	welcome_overlay.name = "WelcomeScreen"
+	welcome_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	welcome_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	welcome_overlay.z_index = 100
+
+	var backdrop = ColorRect.new()
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	backdrop.color = Color(0.0, 0.0, 0.0, 0.96)
+	welcome_overlay.add_child(backdrop)
+
+	var card = PanelContainer.new()
+	card.custom_minimum_size = Vector2(760, 420)
+	card.anchor_left = 0.5
+	card.anchor_top = 0.5
+	card.anchor_right = 0.5
+	card.anchor_bottom = 0.5
+	card.offset_left = -380
+	card.offset_top = -210
+	card.offset_right = 380
+	card.offset_bottom = 210
+
+	var card_style = StyleBoxFlat.new()
+	card_style.bg_color = Color(0.03, 0.05, 0.08, 0.94)
+	card_style.corner_radius_top_left = 22
+	card_style.corner_radius_top_right = 22
+	card_style.corner_radius_bottom_left = 22
+	card_style.corner_radius_bottom_right = 22
+	card_style.border_width_left = 1
+	card_style.border_width_top = 1
+	card_style.border_width_right = 1
+	card_style.border_width_bottom = 1
+	card_style.border_color = Color(0.2, 0.9, 1.0, 0.75)
+	card_style.shadow_color = Color(0.0, 0.7, 1.0, 0.25)
+	card_style.shadow_size = 10
+	card.add_theme_stylebox_override("panel", card_style)
+	welcome_overlay.add_child(card)
+
+	var content = VBoxContainer.new()
+	content.anchor_right = 1.0
+	content.anchor_bottom = 1.0
+	content.alignment = BoxContainer.ALIGNMENT_CENTER
+	content.add_theme_constant_override("separation", 10)
+	card.add_child(content)
+
+	var title = Label.new()
+	title.text = "LIGHT TABLE"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 56)
+	title.modulate = Color(0.35, 0.95, 1.0)
+	content.add_child(title)
+
+	var subtitle = Label.new()
+	subtitle.text = "cinematic interactive projection"
+	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	subtitle.add_theme_font_size_override("font_size", 18)
+	subtitle.modulate = Color(0.95, 0.95, 1.0, 0.9)
+	content.add_child(subtitle)
+
+	welcome_status_label = Label.new()
+	welcome_status_label.text = "Loading sensors"
+	welcome_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	welcome_status_label.add_theme_font_size_override("font_size", 20)
+	welcome_status_label.modulate = Color(1.0, 0.85, 0.45)
+	content.add_child(welcome_status_label)
+
+	var help = RichTextLabel.new()
+	help.bbcode_enabled = true
+	help.fit_content = true
+	help.scroll_active = false
+	help.text = "[center][color=white]TAB[/color] toggles the dashboard\n[color=white]ESC[/color] exits the app\n[color=white]Click[/color] or wait to enter[/center]"
+	content.add_child(help)
+
+	$UI.add_child(welcome_overlay)
+	welcome_timer = 0.0
+
+func dismiss_welcome_screen():
+	if welcome_overlay and is_instance_valid(welcome_overlay):
+		var fade = create_tween()
+		fade.tween_property(welcome_overlay, "modulate:a", 0.0, 0.45)
+		fade.tween_callback(welcome_overlay.queue_free)
+		welcome_overlay = null
+		welcome_status_label = null
+
+func update_audio_sensor():
+	if AudioServer.get_input_frames_available() < 64:
+		audio_level = lerp(audio_level, 0.0, 0.08)
+		if audio_meter_bar:
+			audio_meter_bar.value = audio_level
+		if audio_meter_label:
+			audio_meter_label.text = "Mic: " + str(snapped(audio_level, 0.01))
+		return
+
+	var frames = AudioServer.get_input_frames(256)
+	if frames.is_empty():
+		audio_level = lerp(audio_level, 0.0, 0.08)
+		if audio_meter_bar:
+			audio_meter_bar.value = audio_level
+		if audio_meter_label:
+			audio_meter_label.text = "Mic: " + str(snapped(audio_level, 0.01))
+		return
+
+	var total_energy := 0.0
+	for sample in frames:
+		total_energy += abs(sample.x) + abs(sample.y)
+
+	var level = clamp((total_energy / float(frames.size())) * 0.9, 0.0, 1.0)
+	audio_level = lerp(audio_level, level, 0.25)
+	if audio_meter_bar:
+		audio_meter_bar.value = audio_level
+	if audio_meter_label:
+		audio_meter_label.text = "Mic: " + str(snapped(audio_level, 0.01))
 
 func setup_scene_buttons():
 	var btn_container = $UI/DevDashboard/HSplit/CamPreview/VBox/Controls/VBox
@@ -109,6 +248,11 @@ func setup_scene_buttons():
 	restart_cam_btn.text = "Restart CV Layer"
 	restart_cam_btn.pressed.connect(_on_restart_cam_pressed)
 	btn_container.add_child(restart_cam_btn)
+
+	var welcome_btn = Button.new()
+	welcome_btn.text = "Show Welcome"
+	welcome_btn.pressed.connect(show_welcome_screen)
+	btn_container.add_child(welcome_btn)
 
 	var spacer = Control.new()
 	spacer.custom_minimum_size = Vector2(0, 10)
@@ -169,6 +313,9 @@ func log_message(msg: String):
 func _input(event):
 	if event.is_action_pressed("ui_cancel"): # ESC key
 		get_tree().quit()
+
+	if welcome_overlay and event is InputEventMouseButton and event.pressed:
+		dismiss_welcome_screen()
 
 	if event.is_action_pressed("ui_focus_next"): # TAB key
 		dev_dashboard.visible = !dev_dashboard.visible

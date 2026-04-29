@@ -3,6 +3,7 @@ extends Node2D
 @onready var water_surface := ColorRect.new()
 @onready var water_material := ShaderMaterial.new()
 var ripple_center := Vector2(0.5, 0.5)
+var audio_level := 0.0
 
 func _ready():
 	water_surface.name = "WaterSurface"
@@ -26,6 +27,17 @@ func _ready():
 	hint.position = Vector2(24, 62)
 	add_child(hint)
 
+	var energy = Label.new()
+	energy.name = "EnergyLabel"
+	energy.text = "Audio energy drives ripple intensity"
+	energy.add_theme_font_size_override("font_size", 15)
+	energy.modulate = Color(1.0, 0.9, 0.55, 0.9)
+	energy.position = Vector2(24, 92)
+	add_child(energy)
+
+func set_audio_level(level: float):
+	audio_level = clamp(level, 0.0, 1.0)
+
 func setup_particles():
 	# Fallback: Instead of complex shaders, we'll spawn "Ripple" sprites that fade out
 	pass
@@ -35,7 +47,7 @@ func _process(_delta):
 	if not interactions: return
 
 	water_material.set_shader_parameter("ripple_center", ripple_center)
-	water_material.set_shader_parameter("ripple_strength", 0.35)
+	water_material.set_shader_parameter("ripple_strength", 0.25 + audio_level * 0.55)
 	
 	for touch in interactions.get_children():
 		ripple_center = touch.position / get_viewport_rect().size
