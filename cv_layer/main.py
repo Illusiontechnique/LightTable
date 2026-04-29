@@ -1,5 +1,7 @@
 import cv2
 import mediapipe as mp
+from mediapipe.python.solutions import hands as mp_hands
+from mediapipe.python.solutions import drawing_utils as mp_draw
 import numpy as np
 from bridge import InteractionBridge
 from calibration import Calibration
@@ -7,15 +9,16 @@ import time
 
 class LightTableCV:
     def __init__(self, osc_ip="127.0.0.1", osc_port=7000):
-        self.mp_hands = mp.solutions.hands
+        self.mp_hands = mp_hands
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
             max_num_hands=4,
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5
         )
-        self.mp_draw = mp.solutions.drawing_utils
+        self.mp_draw = mp_draw
         self.bridge = InteractionBridge(osc_ip, osc_port)
+
         self.calibration = Calibration()
         self.debug_mode = True
 
