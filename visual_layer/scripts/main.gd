@@ -57,6 +57,26 @@ func add_instruction_overlay():
 func setup_scene_buttons():
 	var btn_container = $UI/DevDashboard/HSplit/CamPreview/VBox/Controls/VBox
 	
+	# Add Camera Control Buttons
+	var camera_label = Label.new()
+	camera_label.text = "-- HARDWARE --"
+	camera_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	btn_container.add_child(camera_label)
+
+	var restart_cam_btn = Button.new()
+	restart_cam_btn.text = "Restart CV Layer"
+	restart_cam_btn.pressed.connect(_on_restart_cam_pressed)
+	btn_container.add_child(restart_cam_btn)
+
+	var spacer = Control.new()
+	spacer.custom_minimum_size = Vector2(0, 10)
+	btn_container.add_child(spacer)
+
+	var scene_label = Label.new()
+	scene_label.text = "-- SCENES --"
+	scene_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	btn_container.add_child(scene_label)
+	
 	var scenes = {
 		"Water": "res://scripts/content/water_scene.gd",
 		"Piano": "res://scripts/content/piano_scene.gd",
@@ -81,6 +101,18 @@ func load_content_scene(script_path: String):
 	move_child(new_node, 0) # Keep it behind UI
 	active_scene = new_node
 	log_message("Loaded Scene: " + script_path)
+
+func _on_restart_cam_pressed():
+	log_message("Restarting CV Layer...")
+	# Send a special command via UDP to Python to quit
+	var packet = JSON.stringify({"type": "command", "cmd": "quit"}).to_utf8_buffer()
+	receiver.socket.put_packet(packet)
+	
+	# Wait a moment for it to close, then re-launch
+	get_tree().create_timer(1.0).timeout.connect(func():
+		OS.execute("cmd.exe", ["/c", "start /b .venv\\Scripts\\python.exe cv_layer/main.py"], false)
+		log_message("CV Layer Launch Command Sent.")
+	)
 
 func _on_sim_toggled(button_pressed):
 	simulation_mode = button_pressed

@@ -100,8 +100,10 @@ class LightTableCV:
             debug_frame = self.process_frame(frame)
             cv2.imshow('LightTable CV Debug', debug_frame)
             
+            # Check for remote commands from Godot
+            # This is a bit advanced for a single UDP port, so we check for 'q' or exit signals
             key = cv2.waitKey(5) & 0xFF
-            if key == 27: break
+            if key == 27 or key == ord('q'): break
             if key == ord('c'): self.calibration.points = []
 
         cap.release()

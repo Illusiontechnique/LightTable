@@ -11,18 +11,18 @@ void fragment() {
 	
 	// Create some ambient motion (pool-like shifting)
 	float time = TIME * wave_speed;
-	uv.x += sin(uv.y * wave_freq + time) * 0.002;
-	uv.y += cos(uv.x * wave_freq + time) * 0.002;
+	uv.x += sin(uv.y * wave_freq + time) * 0.01;
+	uv.y += cos(uv.x * wave_freq + time) * 0.01;
 	
-	// Base blue water color with transparency
-	vec4 water_color = vec4(0.0, 0.4, 0.8, 0.4);
-	
-	// Sample world behind the water with slight distortion
-	vec4 screen_color = texture(screen_texture, uv);
+	// Base blue water color - simplified for testing
+	vec4 water_color = vec4(0.1, 0.4, 0.8, 0.8);
 	
 	// Subtle caustic/surface highlight effect
-	float caustic = sin(uv.x * 20.0 + time) * cos(uv.y * 20.0 + time * 0.5);
-	water_color.rgb += caustic * 0.05;
+	float caustic1 = sin(uv.x * 30.0 + time * 0.5) * 0.5 + 0.5;
+	float caustic2 = cos(uv.y * 30.0 - time * 0.3) * 0.5 + 0.5;
+	float combined_caustic = pow(caustic1 * caustic2, 2.0);
 	
-	COLOR = mix(screen_color, water_color, 0.5);
+	water_color.rgb += combined_caustic * 0.2;
+	
+	COLOR = water_color;
 }
