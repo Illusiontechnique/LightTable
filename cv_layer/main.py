@@ -67,7 +67,13 @@ class LightTableCV:
         return frame
 
     def run(self):
+        # Fallback for headless or development environments
         cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            print("WARNING: No camera found. Running in Virtual Hand Simulation mode...")
+            self.run_virtual_sim()
+            return
+
         cv2.namedWindow('LightTable CV Debug')
         cv2.setMouseCallback('LightTable CV Debug', self.on_mouse)
         
@@ -87,6 +93,21 @@ class LightTableCV:
         cap.release()
         cv2.destroyAllWindows()
 
+    def run_virtual_sim(self):
+        """Minimal internal simulation if hardware is missing"""
+        print("Generating fake interaction data for testing Visual Layer...")
+        t = 0
+        try:
+            while True:
+                t += 0.05
+                x = 0.5 + 0.2 * np.sin(t)
+                y = 0.5 + 0.2 * np.cos(t)
+                self.send_interaction(99, x * 1920, y * 1080) # Simulate calibrated pixels
+                time.sleep(0.016)
+        except KeyboardInterrupt:
+            pass
+
 if __name__ == "__main__":
+
     lt_cv = LightTableCV()
     lt_cv.run()
