@@ -255,7 +255,6 @@ func update_audio_sensor():
 	if AudioServer.get_input_frames_available() < 64:
 		audio_raw_level = lerp(audio_raw_level, 0.0, 0.08)
 		audio_level = lerp(audio_level, 0.0, 0.08)
-		audio_level = lerp(audio_level, 0.0, 0.08)
 		if audio_meter_bar:
 			audio_meter_bar.value = audio_level
 		if audio_meter_label:
