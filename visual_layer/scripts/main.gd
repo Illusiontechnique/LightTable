@@ -14,12 +14,19 @@ extends Node2D
 
 var active_scene = null
 var simulation_mode = true
+var audio_input_floor := 0.01
+var audio_input_ceiling := 0.18
+var audio_raw_level := 0.0
 var audio_level := 0.0
 var welcome_overlay: Control
 var welcome_status_label: Label
 var welcome_timer := 0.0
 var audio_meter_bar: ProgressBar
 var audio_meter_label: Label
+var audio_floor_label: Label
+var audio_ceiling_label: Label
+var audio_floor_slider: HSlider
+var audio_ceiling_slider: HSlider
 
 # Simple interaction visualizer (circles that appear at hand positions)
 func _ready():
@@ -101,6 +108,45 @@ func setup_audio_ui():
 	audio_meter_bar.show_percentage = false
 	audio_meter_bar.custom_minimum_size = Vector2(0, 18)
 	btn_container.add_child(audio_meter_bar)
+
+	var range_label = Label.new()
+	range_label.text = "-- MIC RANGE --"
+	range_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	range_label.modulate = Color(0.8, 0.95, 1.0)
+	btn_container.add_child(range_label)
+
+	audio_floor_label = Label.new()
+	audio_floor_label.text = "Floor: " + str(snapped(audio_input_floor, 0.001))
+	audio_floor_label.modulate = Color(0.9, 0.95, 1.0)
+	btn_container.add_child(audio_floor_label)
+
+	audio_floor_slider = HSlider.new()
+	audio_floor_slider.min_value = 0.0
+	audio_floor_slider.max_value = 1.0
+	audio_floor_slider.step = 0.001
+	audio_floor_slider.value = audio_input_floor
+	audio_floor_slider.custom_minimum_size = Vector2(0, 20)
+	audio_floor_slider.value_changed.connect(_on_audio_floor_changed)
+	btn_container.add_child(audio_floor_slider)
+
+	audio_ceiling_label = Label.new()
+	audio_ceiling_label.text = "Ceiling: " + str(snapped(audio_input_ceiling, 0.001))
+	audio_ceiling_label.modulate = Color(0.9, 0.95, 1.0)
+	btn_container.add_child(audio_ceiling_label)
+
+	audio_ceiling_slider = HSlider.new()
+	audio_ceiling_slider.min_value = 0.0
+	audio_ceiling_slider.max_value = 1.0
+	audio_ceiling_slider.step = 0.001
+	audio_ceiling_slider.value = audio_input_ceiling
+	audio_ceiling_slider.custom_minimum_size = Vector2(0, 20)
+	audio_ceiling_slider.value_changed.connect(_on_audio_ceiling_changed)
+	btn_container.add_child(audio_ceiling_slider)
+
+	var reset_range_btn = Button.new()
+	reset_range_btn.text = "Reset Mic Range"
+	reset_range_btn.pressed.connect(_reset_audio_range)
+	btn_container.add_child(reset_range_btn)
 
 	var reopen_btn = Button.new()
 	reopen_btn.text = "Show Welcome"
@@ -207,32 +253,72 @@ func dismiss_welcome_screen():
 
 func update_audio_sensor():
 	if AudioServer.get_input_frames_available() < 64:
+		audio_raw_level = lerp(audio_raw_level, 0.0, 0.08)
+		audio_level = lerp(audio_level, 0.0, 0.08)
 		audio_level = lerp(audio_level, 0.0, 0.08)
 		if audio_meter_bar:
 			audio_meter_bar.value = audio_level
 		if audio_meter_label:
-			audio_meter_label.text = "Mic: " + str(snapped(audio_level, 0.01))
+			audio_meter_label.text = "Mic raw: " + str(snapped(audio_raw_level, 0.001)) + " | norm: " + str(snapped(audio_level, 0.001))
 		return
 
 	var frames = AudioServer.get_input_frames(256)
 	if frames.is_empty():
+		audio_raw_level = lerp(audio_raw_level, 0.0, 0.08)
 		audio_level = lerp(audio_level, 0.0, 0.08)
 		if audio_meter_bar:
 			audio_meter_bar.value = audio_level
 		if audio_meter_label:
-			audio_meter_label.text = "Mic: " + str(snapped(audio_level, 0.01))
+			audio_meter_label.text = "Mic raw: " + str(snapped(audio_raw_level, 0.001)) + " | norm: " + str(snapped(audio_level, 0.001))
 		return
 
 	var total_energy := 0.0
 	for sample in frames:
 		total_energy += abs(sample.x) + abs(sample.y)
 
-	var level = clamp((total_energy / float(frames.size())) * 0.9, 0.0, 1.0)
-	audio_level = lerp(audio_level, level, 0.25)
+	var raw_level = clamp((total_energy / float(frames.size())) * 0.9, 0.0, 1.0)
+	audio_raw_level = lerp(audio_raw_level, raw_level, 0.25)
+	var ceiling = max(audio_input_ceiling, audio_input_floor + 0.001)
+	var normalized_level = clamp(inverse_lerp(audio_input_floor, ceiling, audio_raw_level), 0.0, 1.0)
+	audio_level = lerp(audio_level, normalized_level, 0.25)
 	if audio_meter_bar:
 		audio_meter_bar.value = audio_level
 	if audio_meter_label:
-		audio_meter_label.text = "Mic: " + str(snapped(audio_level, 0.01))
+		audio_meter_label.text = "Mic raw: " + str(snapped(audio_raw_level, 0.001)) + " | norm: " + str(snapped(audio_level, 0.001))
+	if audio_floor_label:
+		audio_floor_label.text = "Floor: " + str(snapped(audio_input_floor, 0.001))
+	if audio_ceiling_label:
+		audio_ceiling_label.text = "Ceiling: " + str(snapped(audio_input_ceiling, 0.001))
+
+func _on_audio_floor_changed(value: float):
+	audio_input_floor = clamp(value, 0.0, 0.999)
+	if audio_input_floor >= audio_input_ceiling:
+		audio_input_ceiling = min(1.0, audio_input_floor + 0.01)
+		if audio_ceiling_slider:
+			audio_ceiling_slider.value = audio_input_ceiling
+	if audio_floor_label:
+		audio_floor_label.text = "Floor: " + str(snapped(audio_input_floor, 0.001))
+
+func _on_audio_ceiling_changed(value: float):
+	audio_input_ceiling = clamp(value, 0.001, 1.0)
+	if audio_input_ceiling <= audio_input_floor:
+		audio_input_floor = max(0.0, audio_input_ceiling - 0.01)
+		if audio_floor_slider:
+			audio_floor_slider.value = audio_input_floor
+	if audio_ceiling_label:
+		audio_ceiling_label.text = "Ceiling: " + str(snapped(audio_input_ceiling, 0.001))
+
+func _reset_audio_range():
+	audio_input_floor = 0.01
+	audio_input_ceiling = 0.18
+	if audio_floor_slider:
+		audio_floor_slider.value = audio_input_floor
+	if audio_ceiling_slider:
+		audio_ceiling_slider.value = audio_input_ceiling
+	if audio_floor_label:
+		audio_floor_label.text = "Floor: " + str(snapped(audio_input_floor, 0.001))
+	if audio_ceiling_label:
+		audio_ceiling_label.text = "Ceiling: " + str(snapped(audio_input_ceiling, 0.001))
 
 func setup_scene_buttons():
 	var btn_container = $UI/DevDashboard/HSplit/CamPreview/VBox/Controls/VBox
