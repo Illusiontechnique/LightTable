@@ -110,7 +110,7 @@ func _on_restart_cam_pressed():
 	
 	# Wait a moment for it to close, then re-launch
 	get_tree().create_timer(1.0).timeout.connect(func():
-		OS.execute("cmd.exe", ["/c", "start /b .venv\\Scripts\\python.exe cv_layer/main.py"], false)
+		OS.execute("cmd.exe", ["/c", "start /b .venv\\Scripts\\python.exe cv_layer/main.py"], [])
 		log_message("CV Layer Launch Command Sent.")
 	)
 
