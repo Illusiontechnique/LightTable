@@ -58,6 +58,9 @@ func log_message(msg: String):
 	log_text.append_text("\n[color=gray]" + Time.get_time_string_from_system() + "[/color] " + msg)
 
 func _input(event):
+	if event.is_action_pressed("ui_cancel"): # ESC key
+		get_tree().quit()
+
 	if event.is_action_pressed("ui_focus_next"): # TAB key
 		dev_dashboard.visible = !dev_dashboard.visible
 		if dev_dashboard.visible:

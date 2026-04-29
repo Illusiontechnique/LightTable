@@ -42,15 +42,25 @@ class LightTableCV:
         if event == cv2.EVENT_LBUTTONDOWN:
             if len(self.calibration.points) < 4:
                 self.calibration.points.append([x, y])
-                print(f"Added calibration point: {x}, {y}")
+                print(f"[{len(self.calibration.points)}/4] Added calibration point: {x}, {y}")
                 if len(self.calibration.points) == 4:
                     self.calibration.get_warp_matrix((1,1))
-                    print("Calibration complete.")
+                    print("--- CALIBRATION COMPLETE & SAVED ---")
 
     def process_frame(self, frame):
-        # Show calibration points
-        for p in self.calibration.points:
-            cv2.circle(frame, tuple(p), 5, (0, 255, 0), -1)
+        # Show calibration points and progress
+        for i, p in enumerate(self.calibration.points):
+            cv2.circle(frame, tuple(p), 6, (0, 255, 0), -1)
+            cv2.putText(frame, str(i+1), (p[0]+10, p[1]+10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            
+        if len(self.calibration.points) < 4:
+            # Guide the user through the 4 corners
+            corners = ["Top-Left", "Top-Right", "Bottom-Right", "Bottom-Left"]
+            msg = f"STEP {len(self.calibration.points) + 1}: Click {corners[len(self.calibration.points)]}"
+            cv2.putText(frame, msg, (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        else:
+            cv2.putText(frame, "CALIBRATION ACTIVE", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+            cv2.putText(frame, "Press 'c' to RESET", (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.hands.process(rgb_frame)
@@ -78,6 +88,7 @@ class LightTableCV:
             return
 
         cv2.namedWindow('LightTable CV Debug')
+        cv2.moveWindow('LightTable CV Debug', 0, 0) # Position camera view at top left
         cv2.setMouseCallback('LightTable CV Debug', self.on_mouse)
         
         print("CV Layer Started. Click 4 corners of projection surface to calibrate.")
