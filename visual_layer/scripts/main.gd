@@ -1,6 +1,7 @@
 extends Node2D
 
 @onready var receiver = $NetworkReceiver
+@onready var background = $Background
 @onready var interaction_container = $Interactions
 @onready var dev_dashboard = $UI/DevDashboard
 @onready var log_text = $UI/DevDashboard/Console/LogText
@@ -27,6 +28,7 @@ func _ready():
 	
 	# Dev Dashboard toggle
 	dev_dashboard.visible = true # Start with dashboard for dev
+	dev_dashboard.modulate = Color(1, 1, 1, 0.82)
 	log_message("System Ready. Press Load Water to begin.")
 
 func add_instruction_overlay():
@@ -100,6 +102,7 @@ func load_content_scene(script_path: String):
 	add_child(new_node)
 	move_child(new_node, 0) # Keep it behind UI
 	active_scene = new_node
+	background.visible = false
 	log_message("Loaded Scene: " + script_path)
 
 func _on_restart_cam_pressed():

@@ -1,24 +1,30 @@
 extends Node2D
 
-@onready var water_shader_material = ShaderMaterial.new()
+@onready var water_surface := ColorRect.new()
+@onready var water_material := ShaderMaterial.new()
+var ripple_center := Vector2(0.5, 0.5)
 
 func _ready():
-	# Water Surface with customized Shader
-	var surface = ColorRect.new()
-	surface.name = "WaterSurface"
-	surface.size = get_viewport_rect().size
-	
-	var mat = ShaderMaterial.new()
-	mat.shader = load("res://assets/shaders/water.gdshader")
-	surface.material = mat
-	add_child(surface)
-	
-	# Add some "Bottom" detail for the distortion to act on
-	var background = ColorRect.new()
-	background.size = surface.size
-	background.color = Color(0.0, 0.2, 0.4) # Darker deep water
-	add_child(background)
-	move_child(background, 0)
+	water_surface.name = "WaterSurface"
+	water_surface.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	water_material.shader = load("res://assets/shaders/water.gdshader")
+	water_surface.material = water_material
+	add_child(water_surface)
+
+	var title = Label.new()
+	title.text = "WATER / RIPPLE"
+	title.add_theme_font_size_override("font_size", 34)
+	title.modulate = Color(0.85, 1.0, 1.0)
+	title.position = Vector2(24, 18)
+	add_child(title)
+
+	var hint = Label.new()
+	hint.text = "Move the mouse or hands over the canvas"
+	hint.add_theme_font_size_override("font_size", 16)
+	hint.modulate = Color(0.8, 0.9, 1.0, 0.85)
+	hint.position = Vector2(24, 62)
+	add_child(hint)
 
 func setup_particles():
 	# Fallback: Instead of complex shaders, we'll spawn "Ripple" sprites that fade out
@@ -27,8 +33,12 @@ func setup_particles():
 func _process(_delta):
 	var interactions = get_parent().get_node("Interactions")
 	if not interactions: return
+
+	water_material.set_shader_parameter("ripple_center", ripple_center)
+	water_material.set_shader_parameter("ripple_strength", 0.35)
 	
 	for touch in interactions.get_children():
+		ripple_center = touch.position / get_viewport_rect().size
 		# Spawn small expanding circles to simulate ripples
 		create_ripple(touch.position)
 

@@ -5,6 +5,21 @@ var puzzle_items = []
 
 func _ready():
 	setup_puzzle()
+	add_header()
+
+func add_header():
+	var backdrop = ColorRect.new()
+	backdrop.color = Color(0.10, 0.05, 0.12, 1.0)
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(backdrop)
+	move_child(backdrop, 0)
+
+	var title = Label.new()
+	title.text = "ALPHABET PUZZLE / MATCH THE SHAPES"
+	title.add_theme_font_size_override("font_size", 30)
+	title.modulate = Color(1.0, 0.95, 0.8)
+	title.position = Vector2(24, 18)
+	add_child(title)
 
 func setup_puzzle():
 	for i in range(letters.size()):

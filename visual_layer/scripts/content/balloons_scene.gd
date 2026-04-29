@@ -4,8 +4,23 @@ var balloons = []
 var colors = [Color.RED, Color.GREEN, Color.BLUE, Color.YELLOW, Color.PURPLE]
 
 func _ready():
+	add_header()
 	for i in range(10):
 		spawn_balloon()
+
+func add_header():
+	var backdrop = ColorRect.new()
+	backdrop.color = Color(0.35, 0.55, 0.85, 1.0)
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(backdrop)
+	move_child(backdrop, 0)
+
+	var title = Label.new()
+	title.text = "BALLOONS / POP THEM"
+	title.add_theme_font_size_override("font_size", 34)
+	title.modulate = Color(1, 1, 1)
+	title.position = Vector2(24, 18)
+	add_child(title)
 
 func spawn_balloon():
 	var b = ColorRect.new()

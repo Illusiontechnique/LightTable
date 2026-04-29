@@ -6,6 +6,21 @@ extends Node2D
 
 func _ready():
 	setup_piano()
+	add_header()
+
+func add_header():
+	var backdrop = ColorRect.new()
+	backdrop.color = Color(0.06, 0.06, 0.08, 1.0)
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(backdrop)
+	move_child(backdrop, 0)
+
+	var title = Label.new()
+	title.text = "PIANO / TOUCH KEYS"
+	title.add_theme_font_size_override("font_size", 34)
+	title.modulate = Color(0.95, 0.95, 1.0)
+	title.position = Vector2(24, 18)
+	add_child(title)
 
 func setup_piano():
 	# Create white keys
