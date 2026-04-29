@@ -13,8 +13,6 @@ func _ready():
 	setup_particles()
 
 func setup_particles():
-
-func setup_particles():
 	# Fallback: Instead of complex shaders, we'll spawn "Ripple" sprites that fade out
 	pass
 
