@@ -27,6 +27,8 @@ var audio_floor_label: Label
 var audio_ceiling_label: Label
 var audio_floor_slider: HSlider
 var audio_ceiling_slider: HSlider
+var console_toggle_button: Button
+var console_visible := true
 
 # Simple interaction visualizer (circles that appear at hand positions)
 func _ready():
@@ -41,6 +43,7 @@ func _ready():
 	setup_audio_ui()
 	setup_audio_sensor()
 	apply_cinematic_ui()
+	set_console_visible(true)
 	show_welcome_screen()
 	
 	# Dev Dashboard toggle
@@ -181,6 +184,20 @@ func setup_audio_ui():
 	reset_range_btn.custom_minimum_size = Vector2(0, 34)
 	reset_range_btn.pressed.connect(_reset_audio_range)
 	range_section.add_child(reset_range_btn)
+
+	var view_section = create_dashboard_section(btn_container, "VIEW", Color(0.82, 0.72, 1.0, 0.75))
+
+	console_toggle_button = Button.new()
+	console_toggle_button.custom_minimum_size = Vector2(0, 34)
+	console_toggle_button.pressed.connect(toggle_console_visibility)
+	view_section.add_child(console_toggle_button)
+	refresh_console_toggle_label()
+
+	var console_hint = Label.new()
+	console_hint.text = "Press C to show or hide the console"
+	console_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	console_hint.modulate = Color(0.82, 0.86, 1.0, 0.85)
+	view_section.add_child(console_hint)
 
 func setup_audio_sensor():
 	ProjectSettings.set_setting("audio/driver/enable_input", true)
@@ -421,6 +438,9 @@ func _input(event):
 	if event.is_action_pressed("ui_cancel"): # ESC key
 		get_tree().quit()
 
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_C:
+		toggle_console_visibility()
+
 	if welcome_overlay and event is InputEventMouseButton and event.pressed:
 		dismiss_welcome_screen()
 
@@ -443,6 +463,19 @@ func _input(event):
 		else:
 			var normalized_pos = event.position / get_viewport_rect().size
 			_on_interaction_received(99, normalized_pos, "move")
+
+func toggle_console_visibility():
+	set_console_visible(not console_visible)
+
+func set_console_visible(visible_state: bool):
+	console_visible = visible_state
+	if console_panel:
+		console_panel.visible = visible_state
+	refresh_console_toggle_label()
+
+func refresh_console_toggle_label():
+	if console_toggle_button:
+		console_toggle_button.text = "Hide Console" if console_visible else "Show Console"
 
 func _on_interaction_received(id: int, pos: Vector2, state: String):
 	# Map normalized 0-1 to screen size

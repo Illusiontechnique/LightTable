@@ -18,22 +18,17 @@ color = Color(0, 0, 0, 1)
 
 [node name="UI" type="CanvasLayer" parent="."]
 
-[node name="DevDashboard" type="Control" parent="UI"]
-layout_mode = 3
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
+[node name="DevDashboard" type="VBoxContainer" parent="UI"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 12
 mouse_filter = 2
 
 [node name="HSplit" type="HBoxContainer" parent="UI/DevDashboard"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
 mouse_filter = 2
 theme_override_constants/separation = 0
 
@@ -109,13 +104,9 @@ text = "PROJECTED CANVAS"
 
 [node name="Console" type="PanelContainer" parent="UI/DevDashboard"]
 custom_minimum_size = Vector2(0, 150)
-layout_mode = 1
-anchors_preset = 12
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 0
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 0
 mouse_filter = 2
 
 [node name="LogText" type="RichTextLabel" parent="UI/DevDashboard/Console"]
