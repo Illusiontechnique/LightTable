@@ -19,12 +19,40 @@ func _ready():
 	
 	sim_toggle.toggled.connect(_on_sim_toggled)
 	
+	# Add Instruction Overlay
+	add_instruction_overlay()
+	
 	# Scene Selection Buttons
 	setup_scene_buttons()
 	
 	# Dev Dashboard toggle
 	dev_dashboard.visible = true # Start with dashboard for dev
 	log_message("System Ready. Press Load Water to begin.")
+
+func add_instruction_overlay():
+	var panel = PanelContainer.new()
+	panel.name = "WelcomeBox"
+	panel.modulate.a = 0.9
+	panel.position = Vector2(50, 50)
+	panel.size = Vector2(350, 200)
+	
+	var style = StyleBoxFlat.new()
+	style.bg_color = Color(0, 0, 0, 0.7)
+	style.corner_radius_top_left = 10
+	style.corner_radius_bottom_right = 10
+	panel.add_theme_stylebox_override("panel", style)
+	
+	var label = RichTextLabel.new()
+	label.bbcode_enabled = true
+	label.text = "[center][b][color=aqua]LIGHT TABLE v1.0[/color][/b][/center]\n\n" + \
+				 "[color=yellow]TAB[/color] - Toggle Dev/Projector Mode\n" + \
+				 "[color=yellow]ESC[/color] - Exit Application\n\n" + \
+				 "1. Click [b]Load Water[/b]\n" + \
+				 "2. Calibrate Cam (TL, TR, BR, BL)\n" + \
+				 "3. Move hands to interact!"
+	
+	panel.add_child(label)
+	$UI.add_child(panel)
 
 func setup_scene_buttons():
 	var btn_container = $UI/DevDashboard/HSplit/CamPreview/VBox/Controls/VBox

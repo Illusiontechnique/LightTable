@@ -3,14 +3,22 @@ extends Node2D
 @onready var water_shader_material = ShaderMaterial.new()
 
 func _ready():
-	# Simple ColorRect to act as the water surface
+	# Water Surface with customized Shader
 	var surface = ColorRect.new()
 	surface.name = "WaterSurface"
 	surface.size = get_viewport_rect().size
-	surface.color = Color(0.1, 0.4, 0.8, 0.4) # Semi-transparent blue
+	
+	var mat = ShaderMaterial.new()
+	mat.shader = load("res://assets/shaders/water.gdshader")
+	surface.material = mat
 	add_child(surface)
 	
-	setup_particles()
+	# Add some "Bottom" detail for the distortion to act on
+	var background = ColorRect.new()
+	background.size = surface.size
+	background.color = Color(0.0, 0.2, 0.4) # Darker deep water
+	add_child(background)
+	move_child(background, 0)
 
 func setup_particles():
 	# Fallback: Instead of complex shaders, we'll spawn "Ripple" sprites that fade out
