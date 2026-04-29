@@ -6,6 +6,12 @@ var ripple_center := Vector2(0.5, 0.5)
 var audio_level := 0.0
 
 func _ready():
+	var backdrop = ColorRect.new()
+	backdrop.color = Color(0.0, 0.0, 0.0, 1.0)
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(backdrop)
+	move_child(backdrop, 0)
+
 	water_surface.name = "WaterSurface"
 	water_surface.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 

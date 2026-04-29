@@ -10,7 +10,7 @@ func _ready():
 
 func add_header():
 	var backdrop = ColorRect.new()
-	backdrop.color = Color(0.06, 0.06, 0.08, 1.0)
+	backdrop.color = Color(0.0, 0.0, 0.0, 1.0)
 	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(backdrop)
 	move_child(backdrop, 0)
@@ -34,7 +34,7 @@ func add_header():
 
 	func add_stage():
 		var backdrop = ColorRect.new()
-		backdrop.color = Color(0.02, 0.02, 0.04, 1.0)
+		backdrop.color = Color(0.0, 0.0, 0.0, 1.0)
 		backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		add_child(backdrop)
 		move_child(backdrop, 0)

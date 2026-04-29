@@ -23,7 +23,7 @@ func _ready():
 
 func add_stage():
 	var bg = ColorRect.new()
-	bg.color = Color(0.01, 0.02, 0.03, 1.0)
+	bg.color = Color(0.0, 0.0, 0.0, 1.0)
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(bg)
 

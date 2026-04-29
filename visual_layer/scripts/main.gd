@@ -68,7 +68,7 @@ func apply_cinematic_ui():
 	output_preview_panel.add_theme_stylebox_override("panel", panel_style)
 	console_panel.add_theme_stylebox_override("panel", panel_style)
 
-	cam_rect.color = Color(0.03, 0.08, 0.14, 1.0)
+	cam_rect.color = Color(0.0, 0.0, 0.0, 1.0)
 	log_text.modulate = Color(0.92, 0.98, 1.0, 1.0)
 	cam_preview_panel.modulate = Color(0.95, 0.99, 1.0, 1.0)
 	output_preview_panel.modulate = Color(0.95, 0.99, 1.0, 1.0)
