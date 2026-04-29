@@ -13,7 +13,10 @@ var simulation_mode = true
 
 # Simple interaction visualizer (circles that appear at hand positions)
 func _ready():
-	receiver.interaction_received.connect(_on_interaction_received)
+	var err = receiver.interaction_received.connect(_on_interaction_received)
+	if err != OK:
+		log_message("Error connecting signal!")
+	
 	sim_toggle.toggled.connect(_on_sim_toggled)
 	
 	# Scene Selection Buttons
@@ -21,6 +24,7 @@ func _ready():
 	
 	# Dev Dashboard toggle
 	dev_dashboard.visible = true # Start with dashboard for dev
+	log_message("System Ready. Press Load Water to begin.")
 
 func setup_scene_buttons():
 	var btn_container = $UI/DevDashboard/HSplit/CamPreview/VBox/Controls/VBox
