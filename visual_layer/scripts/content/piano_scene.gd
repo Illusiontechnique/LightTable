@@ -103,8 +103,9 @@ func _process(_delta):
 		for i in range(key_nodes.size()):
 			var key = key_nodes[i]
 			var pressed = false
-			for touch in interactions.get_children():
-				if key.get_global_rect().has_point(touch.global_position):
+					add_stage()
+					setup_audio()
+					setup_piano()
 					pressed = true
 					break
 
@@ -130,9 +131,9 @@ func _process(_delta):
 				continue
 
 			var frames_to_push = mini(playback.get_frames_available(), 512)
-			for _frame in range(frames_to_push):
-				var env = 0.0
-				if voice.remaining > 0.0:
+						key.size = Vector2(key_width - 6, 420)
+						key.position = Vector2(80 + i * key_width, 250)
+						key.color = Color(0.92, 0.92, 0.96)
 					voice.remaining -= 1.0 / SAMPLE_RATE
 					var note_progress = clamp(1.0 - (voice.remaining / NOTE_DURATION), 0.0, 1.0)
 					env = pow(1.0 - note_progress, 1.7)
