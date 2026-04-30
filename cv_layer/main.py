@@ -141,16 +141,37 @@ class LightTableCV:
     # Camera helpers
     # ------------------------------------------------------------------
     def _open_cap(self, idx: int):
+        """Open camera at idx and verify a frame can actually be read.
+        Returns the cap if working, or a released cap object if not."""
         cap = cv2.VideoCapture(idx)
-        if cap.isOpened():
-            self._cam_idx = idx
-        return cap
+        if not cap.isOpened():
+            return cap
+        # MSMF on Windows sometimes reports isOpened()=True but fails to
+        # deliver frames (e.g. camera held by another process / IR sensor).
+        # Drain up to 5 frames with brief sleeps to confirm the stream works.
+        for _ in range(5):
+            ok, _ = cap.read()
+            if ok:
+                self._cam_idx = idx
+                return cap
+            time.sleep(0.12)
+        cap.release()
+        return cv2.VideoCapture(-1)   # guaranteed not-opened
+
+    def _auto_open_cap(self):
+        """Scan indices 0-9 and return the first camera that delivers frames."""
+        for idx in range(10):
+            cap = self._open_cap(idx)
+            if cap.isOpened():
+                print(f"Camera {idx} opened successfully.")
+                return cap
+        return cv2.VideoCapture(-1)   # nothing found
 
     # ------------------------------------------------------------------
     # Main loop
     # ------------------------------------------------------------------
     def run(self):
-        cap = self._open_cap(0)
+        cap = self._auto_open_cap()
         if not cap.isOpened():
             print("WARNING: No camera found.  Running virtual simulation...")
             self.run_virtual_sim()
@@ -191,8 +212,9 @@ class LightTableCV:
                     cap = new_cap
                     self.tracker.reset()
                 else:
-                    print(f"Camera {new_cidx} unavailable, staying on {self._cam_idx}")
-                    cap = self._open_cap(self._cam_idx)
+                    prev = self._cam_idx
+                    print(f"Camera {new_cidx} unavailable, staying on {prev}")
+                    cap = self._open_cap(prev)
 
             frame   = self._adjust_frame(frame, settings)
             display = self.process_frame(frame, settings)

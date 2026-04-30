@@ -387,15 +387,20 @@ func setup_scene_buttons():
 	var scene_section = create_dashboard_section(btn_container, "SCENES", Color(1.0, 0.88, 0.55, 0.75))
 	
 	var scenes = {
-		"Water":        "res://scripts/content/water_scene.gd",
-		"Spinner":      "res://scripts/content/spinner_scene.gd",
-		"Blob Painter": "res://scripts/content/blob_painter_scene.gd",
-		"Color Trails": "res://scripts/content/color_trails_scene.gd",
-		"Edge Reveal":  "res://scripts/content/edge_reveal_scene.gd",
-		"Piano":        "res://scripts/content/piano_scene.gd",
-		"Alphabet":     "res://scripts/content/alphabet_puzzle.gd",
-		"Balloons":     "res://scripts/content/balloons_scene.gd",
-		"Bug":          "res://scripts/content/bug_scene.gd",
+		"Water":          "res://scripts/content/water_scene.gd",
+		"Balloons":       "res://scripts/content/balloons_scene.gd",
+		"Bouncing Balls": "res://scripts/content/bouncing_balls_scene.gd",
+		"Elements":       "res://scripts/content/elements_scene.gd",
+		"Galaxy":         "res://scripts/content/galaxy_scene.gd",
+		"Draw":           "res://scripts/content/freehand_draw_scene.gd",
+		"Talk Back":      "res://scripts/content/talk_back_scene.gd",
+		"Spinner":        "res://scripts/content/spinner_scene.gd",
+		"Blob Painter":   "res://scripts/content/blob_painter_scene.gd",
+		"Color Trails":   "res://scripts/content/color_trails_scene.gd",
+		"Edge Reveal":    "res://scripts/content/edge_reveal_scene.gd",
+		"Piano":          "res://scripts/content/piano_scene.gd",
+		"Alphabet":       "res://scripts/content/alphabet_puzzle.gd",
+		"Bug":            "res://scripts/content/bug_scene.gd",
 	}
 	
 	for s_name in scenes:
