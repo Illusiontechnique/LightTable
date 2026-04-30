@@ -25,6 +25,8 @@ var vp_size     : Vector2
 var audio_level : float = 0.0
 var _audio_sm   : float = 0.0
 var _balloons   : Array = []
+var _pop_count  : int   = 0
+var _pop_label  : Label
 
 func _ready() -> void:
 	vp_size = get_viewport_rect().size
@@ -48,6 +50,16 @@ func _ready() -> void:
 	s.modulate = Color(1.0, 0.92, 0.55, 0.65)
 	s.position = Vector2(24, 56)
 	add_child(s)
+
+	# Pop counter — top-right
+	_pop_label = Label.new()
+	_pop_label.text = "POPS: 0"
+	_pop_label.add_theme_font_size_override("font_size", 42)
+	_pop_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_pop_label.modulate = Color(1.0, 0.92, 0.55, 0.92)
+	_pop_label.size = Vector2(vp_size.x - 24, 60)
+	_pop_label.position = Vector2(0, 18)
+	add_child(_pop_label)
 
 	for _i in range(10):
 		_spawn_balloon()
@@ -212,6 +224,10 @@ func _pop_balloon(idx: int) -> void:
 
 	_play_pop(randf_range(0.7, 1.65))
 	_confetti(b["node"].global_position, b["col"])
+
+	_pop_count += 1
+	if _pop_label:
+		_pop_label.text = "POPS: %d" % _pop_count
 
 	var sc : float = b["sc"]
 	var tw := (b["node"] as Node2D).create_tween()

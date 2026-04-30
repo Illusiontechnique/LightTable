@@ -549,10 +549,27 @@ class WebRemote:
 
         return app
 
+    def _generate_qr(self, url: str) -> None:
+        """Write QR PNG to visual_layer/assets/remote_qr.png next to the project."""
+        try:
+            import qrcode as _qr
+            qr = _qr.QRCode(box_size=7, border=2)
+            qr.add_data(url)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="#ffffff", back_color="#000000")
+            out = Path(__file__).parent.parent / "visual_layer" / "assets" / "remote_qr.png"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            img.save(str(out))
+        except Exception as e:
+            print(f"[WebRemote] QR generation skipped: {e}")
+
     # ── Public API ────────────────────────────────────────────────────────────
     def start(self) -> None:
         """Start Flask in a background daemon thread."""
         app = self._create_app()
+        url = self.get_url()
+        self._generate_qr(url)
+        print(f"[WebRemote] QR saved to visual_layer/assets/remote_qr.png")
 
         def _run():
             import logging

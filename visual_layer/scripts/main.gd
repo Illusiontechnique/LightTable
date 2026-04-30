@@ -287,6 +287,57 @@ func show_welcome_screen():
 	help.text = "[center][color=white]TAB[/color] toggles the dashboard\n[color=white]ESC[/color] exits the app\n[color=white]Click[/color] or wait to enter[/center]"
 	content.add_child(help)
 
+	# ── Remote access info ────────────────────────────────────────────
+	var sep := HSeparator.new()
+	sep.modulate = Color(1.0, 1.0, 1.0, 0.15)
+	content.add_child(sep)
+
+	# Read PIN from remote_config.json if present
+	var pin_str  : String = "----"
+	var cfg_path : String = ProjectSettings.globalize_path("res://") + "../remote_config.json"
+	var cfg_file := FileAccess.open(cfg_path, FileAccess.READ)
+	if cfg_file:
+		var j := JSON.new()
+		j.parse(cfg_file.get_as_text())
+		if j.data is Dictionary and j.data.has("pin"):
+			pin_str = str(j.data["pin"])
+
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 14)
+	content.add_child(row)
+
+	# QR code placeholder — loaded 1.5 s later (Python needs time to start)
+	var qr_rect := TextureRect.new()
+	qr_rect.custom_minimum_size = Vector2(90, 90)
+	qr_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	qr_rect.modulate = Color(1.0, 1.0, 1.0, 0.92)
+	row.add_child(qr_rect)
+	var qr_abs : String = ProjectSettings.globalize_path("res://") + "assets/remote_qr.png"
+	get_tree().create_timer(1.5, false).timeout.connect(func():
+		if is_instance_valid(qr_rect):
+			var img := Image.new()
+			if img.load(qr_abs) == OK:
+				qr_rect.texture = ImageTexture.create_from_image(img)
+	)
+
+	var info_col := VBoxContainer.new()
+	info_col.alignment = BoxContainer.ALIGNMENT_CENTER
+	info_col.add_theme_constant_override("separation", 6)
+	row.add_child(info_col)
+
+	var url_lbl := Label.new()
+	url_lbl.text = "http://%s:5000" % _get_lan_ip()
+	url_lbl.add_theme_font_size_override("font_size", 17)
+	url_lbl.modulate = Color(0.55, 1.0, 0.88, 0.95)
+	info_col.add_child(url_lbl)
+
+	var pin_lbl := Label.new()
+	pin_lbl.text = "PIN: %s" % pin_str
+	pin_lbl.add_theme_font_size_override("font_size", 17)
+	pin_lbl.modulate = Color(1.0, 0.85, 0.45, 0.90)
+	info_col.add_child(pin_lbl)
+
 	$UI.add_child(welcome_overlay)
 	welcome_timer = 0.0
 
@@ -297,6 +348,12 @@ func dismiss_welcome_screen():
 		fade.tween_callback(welcome_overlay.queue_free)
 		welcome_overlay = null
 		welcome_status_label = null
+
+func _get_lan_ip() -> String:
+	for addr in IP.get_local_addresses():
+		if addr.count(".") == 3 and not addr.begins_with("127.") and not addr.begins_with("169."):
+			return addr
+	return "localhost"
 
 func update_audio_sensor():
 	if AudioServer.get_input_frames_available() < 64:

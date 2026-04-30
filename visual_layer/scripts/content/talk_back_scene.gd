@@ -66,9 +66,11 @@ func _add_backdrop() -> void:
 
 	var t := Label.new()
 	t.text = "TALK BACK"
-	t.add_theme_font_size_override("font_size", 28)
-	t.modulate = Color(1.0, 0.85, 0.55, 0.75)
-	t.position = Vector2(24, 12)
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	t.size = Vector2(vp_size.x, 36)
+	t.add_theme_font_size_override("font_size", 22)
+	t.modulate = Color(1.0, 0.85, 0.55, 0.45)
+	t.position = Vector2(0, vp_size.y * 0.02)
 	add_child(t)
 
 
@@ -86,7 +88,8 @@ func _build_grid() -> void:
 	var total_w : float = COLS * (TILE_W + PAD) - PAD
 	var total_h : float = ROWS * (TILE_H + PAD) - PAD
 	var ox      : float = (vp_size.x - total_w) * 0.5
-	var oy      : float = (vp_size.y - total_h) * 0.5 + 20.0
+	# Push grid to lower ~40% of screen, centred in that band
+	var oy      : float = vp_size.y - total_h - vp_size.y * 0.04
 
 	for i in range(LETTERS.size()):
 		var col_i : int   = i % COLS
@@ -134,28 +137,47 @@ func _build_grid() -> void:
 
 
 func _build_center_display() -> void:
-	# Central floating display
+	# Card spans from just below the title to just above the alphabet grid.
+	# 7 cols × (110+8)-8 = 854 px wide; grid top ≈ vp_size.y * 0.56 at 1080p.
+	const COLS   := 7
+	const TILE_W := 110.0
+	const TILE_H := 90.0
+	const PAD    := 8.0
+	const ROWS   := 4
+	var total_w  : float = COLS * (TILE_W + PAD) - PAD
+	var total_h  : float = ROWS * (TILE_H + PAD) - PAD
+	var grid_top : float = vp_size.y - total_h - vp_size.y * 0.04
+
+	var panel_w  : float = min(total_w, vp_size.x * 0.80)
+	var panel_y1 : float = vp_size.y * 0.07
+	var panel_y2 : float = grid_top  - vp_size.y * 0.025
+	var panel_h  : float = panel_y2 - panel_y1
+
 	var panel := ColorRect.new()
 	panel.name     = "CenterPanel"
-	panel.color    = Color(0.06, 0.06, 0.08, 0.88)
-	panel.size     = Vector2(260, 160)
-	panel.position = Vector2(vp_size.x * 0.5 - 130, vp_size.y * 0.5 - 80)
+	panel.color    = Color(0.04, 0.04, 0.08, 0.88)
+	panel.size     = Vector2(panel_w, panel_h)
+	panel.position = Vector2((vp_size.x - panel_w) * 0.5, panel_y1)
 	panel.visible  = false
 	add_child(panel)
 
+	# Big letter
 	_center_lbl = Label.new()
 	_center_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_center_lbl.size                 = Vector2(260, 100)
-	_center_lbl.position             = Vector2(0, 10)
-	_center_lbl.add_theme_font_size_override("font_size", 80)
+	_center_lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
+	_center_lbl.size      = Vector2(panel_w, panel_h * 0.62)
+	_center_lbl.position  = Vector2(0, panel_h * 0.04)
+	_center_lbl.add_theme_font_size_override("font_size", int(panel_h * 0.54))
 	panel.add_child(_center_lbl)
 
+	# Word label
 	_word_lbl = Label.new()
 	_word_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_word_lbl.size                 = Vector2(260, 40)
-	_word_lbl.position             = Vector2(0, 112)
-	_word_lbl.add_theme_font_size_override("font_size", 20)
-	_word_lbl.modulate = Color(0.9, 0.9, 1.0, 0.85)
+	_word_lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
+	_word_lbl.size      = Vector2(panel_w, panel_h * 0.30)
+	_word_lbl.position  = Vector2(0, panel_h * 0.65)
+	_word_lbl.add_theme_font_size_override("font_size", int(panel_h * 0.16))
+	_word_lbl.modulate  = Color(0.95, 0.92, 1.0, 0.92)
 	panel.add_child(_word_lbl)
 
 

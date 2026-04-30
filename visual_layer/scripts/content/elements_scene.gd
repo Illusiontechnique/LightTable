@@ -180,22 +180,61 @@ func _spawn_water(pos: Vector2) -> void:
 
 
 func _spawn_earth(pos: Vector2, extra: int) -> void:
-	for _i in range(3 + extra):
+	# ── Mushroom caps ─────────────────────────────────────────────────
+	for _i in range(2 + extra):
 		if _particles.size() >= MAX_PARTICLES:
 			return
-		var p := Polygon2D.new()
-		var r : float = randf_range(4, 10)
-		p.polygon  = _circle_pts(r, randi_range(4, 7))
-		p.color    = Color.from_hsv(randf_range(0.22, 0.32), randf_range(0.55, 0.80), randf_range(0.38, 0.70))
-		p.position = pos + Vector2(randf_range(-25, 25), randf_range(-8, 8))
-		p.rotation = randf_range(0.0, TAU)
+		var p    := Polygon2D.new()
+		var r    : float = randf_range(7.0, 18.0)
+		# Semi-circle cap (convex dome)
+		var cap  := PackedVector2Array()
+		cap.append(Vector2(-r * 1.15, 0.0))
+		for j in range(10):
+			var a : float = PI * float(j) / 9.0   # 0 → PI across the top
+			cap.append(Vector2(cos(a) * r, -sin(a) * r * 0.72))
+		cap.append(Vector2(r * 1.15, 0.0))
+		# Stubby stipe
+		cap.append(Vector2( r * 0.28,  r * 0.85))
+		cap.append(Vector2(-r * 0.28,  r * 0.85))
+		p.polygon  = cap
+		p.color    = Color.from_hsv(
+			randf_range(0.05, 0.16),
+			randf_range(0.40, 0.70),
+			randf_range(0.55, 0.88)
+		)
+		p.position = pos + Vector2(randf_range(-45, 45), randf_range(-12, 12))
+		p.rotation = randf_range(-0.25, 0.25)
 		add_child(p)
 		_particles.append({
 			"node":     p,
-			"type":     "earth",
-			"vel":      Vector2(randf_range(-55, 55), randf_range(-95, -25)),
-			"life":     1.6,
-			"max_life": 1.6,
+			"type":     "mushroom",
+			"vel":      Vector2(0.0, randf_range(-18.0, -5.0)),
+			"life":     2.6,
+			"max_life": 2.6,
+		})
+
+	# ── Mycelium threads ──────────────────────────────────────────────
+	for _i in range(3 + extra):
+		if _particles.size() >= MAX_PARTICLES:
+			return
+		var ln    := Line2D.new()
+		var start := pos + Vector2(randf_range(-35, 35), randf_range(-20, 20))
+		var angle : float = randf_range(0.0, TAU)
+		var length : float = randf_range(50.0, 140.0)
+		ln.add_point(start)
+		for s in range(6):
+			angle += randf_range(-0.55, 0.55)
+			var t2 : float = float(s + 1) / 6.0
+			ln.add_point(start + Vector2(cos(angle), sin(angle)) * length * t2)
+		ln.width         = randf_range(1.0, 2.8)
+		ln.default_color = Color.from_hsv(randf_range(0.25, 0.38), 0.30, randf_range(0.72, 1.0), 0.0)
+		add_child(ln)
+		_particles.append({
+			"node":     ln,
+			"type":     "mycelium",
+			"vel":      Vector2.ZERO,
+			"life":     3.2,
+			"max_life": 3.2,
 		})
 
 
@@ -251,13 +290,20 @@ func _process(delta: float) -> void:
 				var sc     : float = 1.0 + (1.0 - frac) * growth * 0.04
 				rn.scale               = Vector2(sc, sc)
 				rn.default_color.a     = frac * 0.75
-			"earth":
+			"mushroom":
+				# Rises gently, grows in during first 35% of life, fades at end
 				var en : Polygon2D = node as Polygon2D
 				en.position += vel * delta
-				vel.y        += 300.0 * delta
-				p["vel"]      = vel
-				en.rotation  += delta * 2.5
-				en.color.a    = frac
+				var age_frac : float = 1.0 - frac               # 0=newborn 1=dying
+				var grow_sc  : float = clamp(age_frac / 0.35, 0.0, 1.0)
+				en.scale    = Vector2(grow_sc, grow_sc)
+				en.color.a  = frac * grow_sc
+			"mycelium":
+				# Fades in then out — bell-curve alpha
+				var ln : Line2D = node as Line2D
+				var age_frac2 : float = 1.0 - frac
+				var bell      : float = sin(PI * clamp(age_frac2 / 0.85, 0.0, 1.0))
+				ln.default_color.a = bell * 0.82
 
 		_particles[i] = p
 
