@@ -1,4 +1,7 @@
-opencv-python
+# NOTE: opencv-contrib-python includes the full tracker suite (CSRT, KCF, etc.)
+#       It CANNOT coexist with opencv-python.  If you have opencv-python installed,
+#       run: pip uninstall opencv-python && pip install opencv-contrib-python
+opencv-contrib-python
 numpy
 python-osc
 mediapipe

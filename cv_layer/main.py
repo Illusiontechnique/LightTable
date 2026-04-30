@@ -1,129 +1,242 @@
 import cv2
-import mediapipe as mp
 import numpy as np
-from bridge import InteractionBridge
-from calibration import Calibration
 import time
 
+from bridge      import InteractionBridge
+from calibration import Calibration
+from camera_ui   import CameraUI, TRACKER_NAMES, SMOOTH_LABELS
+from smoothing   import KalmanSmoother, ExponentialSmoother
+from trackers    import (
+    HandTracker, BlobTracker, MotionTracker,
+    ColorTracker, EdgeTracker, ObjectTracker,
+)
+
+# Order must match TRACKER_NAMES in camera_ui.py
+TRACKER_CLASSES = [
+    HandTracker,
+    BlobTracker,
+    MotionTracker,
+    ColorTracker,
+    EdgeTracker,
+    ObjectTracker,
+]
+
+_DEBUG_WIN = "LightTable CV"
+
+
 class LightTableCV:
+
     def __init__(self, osc_ip="127.0.0.1", osc_port=7000):
-        self.mp_hands = mp.solutions.hands
-        self.hands = self.mp_hands.Hands(
-            static_image_mode=False,
-            max_num_hands=4,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
-        )
-        self.mp_draw = mp.solutions.drawing_utils
-        self.bridge = InteractionBridge(osc_ip, osc_port)
-
+        self.bridge      = InteractionBridge(osc_ip, osc_port)
         self.calibration = Calibration()
-        self.debug_mode = True
+        self.ui          = CameraUI()
+        self.kalman      = KalmanSmoother()
+        self.ema         = ExponentialSmoother(alpha=0.35)
 
+        self._tracker_idx = 0
+        self._cam_idx     = 0
+        self.tracker      = TRACKER_CLASSES[0]()
+
+    # ------------------------------------------------------------------
+    # OSC output
+    # ------------------------------------------------------------------
     def send_interaction(self, id, x, y, state="move"):
-        # Map raw camera coordinates to calibrated surface coordinates
         cal_x, cal_y = self.calibration.apply(x, y)
-        
-        # Normalize to 0.0 - 1.0 based on target resolution (1920x1080)
-        norm_x = cal_x / 1920.0
-        norm_y = cal_y / 1080.0
-
+        norm_x = float(np.clip(cal_x / 1920.0, 0.0, 1.0))
+        norm_y = float(np.clip(cal_y / 1080.0, 0.0, 1.0))
         self.bridge.send({
-            "type": "interaction",
-            "id": id,
-            "x": float(norm_x),
-            "y": float(norm_y),
+            "type":  "interaction",
+            "id":    id,
+            "x":     norm_x,
+            "y":     norm_y,
             "state": state,
-            "raw_x": float(x),
-            "raw_y": float(y)
         })
 
+    # ------------------------------------------------------------------
+    # Smoothing
+    # ------------------------------------------------------------------
+    def _smooth(self, mode: int, ema_raw: int, detections: list) -> list:
+        """Apply per-ID smoothing.  mode: 0=none  1=EMA  2=Kalman."""
+        if mode == 0:
+            return detections
+        self.ema.set_alpha(max(0.05, ema_raw / 100.0))
+        out = []
+        for d in detections:
+            if mode == 1:
+                sx, sy = self.ema.smooth(d["id"], d["x"], d["y"])
+            else:
+                sx, sy = self.kalman.smooth(d["id"], d["x"], d["y"])
+            out.append({**d, "x": sx, "y": sy})
+        return out
+
+    # ------------------------------------------------------------------
+    # Frame pre-processing
+    # ------------------------------------------------------------------
+    def _adjust_frame(self, frame, s: dict):
+        if s["Flip H"]:
+            frame = cv2.flip(frame, 1)
+        alpha = s["Contrast"]   / 50.0   # 0-2, neutral at 1.0
+        beta  = s["Brightness"] - 50     # -50..+50 offset
+        return cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
+
+    # ------------------------------------------------------------------
+    # Mouse callback (calibration)
+    # ------------------------------------------------------------------
     def on_mouse(self, event, x, y, flags, param):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            if len(self.calibration.points) < 4:
-                self.calibration.points.append([x, y])
-                print(f"[{len(self.calibration.points)}/4] Added calibration point: {x}, {y}")
-                if len(self.calibration.points) == 4:
-                    self.calibration.get_warp_matrix((1,1))
-                    print("--- CALIBRATION COMPLETE & SAVED ---")
+        if event == cv2.EVENT_LBUTTONDOWN and len(self.calibration.points) < 4:
+            self.calibration.points.append([x, y])
+            print(f"[{len(self.calibration.points)}/4] Calibration point: ({x}, {y})")
+            if len(self.calibration.points) == 4:
+                self.calibration.get_warp_matrix((1, 1))
+                print("--- CALIBRATION COMPLETE ---")
 
-    def process_frame(self, frame):
-        # Show calibration points and progress
-        for i, p in enumerate(self.calibration.points):
-            cv2.circle(frame, tuple(p), 6, (0, 255, 0), -1)
-            cv2.putText(frame, str(i+1), (p[0]+10, p[1]+10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            
-        if len(self.calibration.points) < 4:
-            # Guide the user through the 4 corners
-            corners = ["Top-Left", "Top-Right", "Bottom-Right", "Bottom-Left"]
-            msg = f"STEP {len(self.calibration.points) + 1}: Click {corners[len(self.calibration.points)]}"
-            cv2.putText(frame, msg, (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+    # ------------------------------------------------------------------
+    # Main per-frame processing (tracker runs on clean frame; overlays on display)
+    # ------------------------------------------------------------------
+    def process_frame(self, frame, settings: dict):
+        # 1. Run tracker on the adjusted (but overlay-free) frame
+        detections = self.tracker.process(frame)
+        detections = self._smooth(settings["Smoothing"], settings["EMA Respons"], detections)
+
+        # 2. Build display image
+        if settings["Show Mask"] and hasattr(self.tracker, "_mask") and self.tracker._mask is not None:
+            display = cv2.cvtColor(self.tracker._mask, cv2.COLOR_GRAY2BGR)
         else:
-            cv2.putText(frame, "CALIBRATION ACTIVE", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-            cv2.putText(frame, "Press 'c' to RESET", (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            display = self.tracker.draw_debug(frame.copy(), detections)
 
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = self.hands.process(rgb_frame)
+        # 3. Calibration overlay
+        corner_labels = ["TL", "TR", "BR", "BL"]
+        for i, p in enumerate(self.calibration.points):
+            cv2.circle(display, tuple(p), 7, (0, 255, 0), -1)
+            cv2.putText(display, corner_labels[i],
+                        (p[0] + 10, p[1] + 12),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
-        if results.multi_hand_landmarks:
-            for hand_id, hand_landmarks in enumerate(results.multi_hand_landmarks):
-                # Landmarks are normalized 0-1 of the CAMERA frame
-                h, w, _ = frame.shape
-                index_tip = hand_landmarks.landmark[8]
-                raw_x, raw_y = index_tip.x * w, index_tip.y * h
-                
-                self.send_interaction(hand_id, raw_x, raw_y)
+        if len(self.calibration.points) < 4:
+            labels = ["Top-Left", "Top-Right", "Bottom-Right", "Bottom-Left"]
+            msg = (f"CALIBRATE {len(self.calibration.points)+1}/4 "
+                   f"— click {labels[len(self.calibration.points)]}")
+            cv2.putText(display, msg, (20, 38),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 50, 255), 2)
+        else:
+            cv2.putText(display, "Calibrated  [c]=reset", (20, 38),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 0), 1)
 
-                if self.debug_mode:
-                    self.mp_draw.draw_landmarks(frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
+        # 4. HUD
+        smooth_lbl = SMOOTH_LABELS[settings["Smoothing"]]
+        hud = (f"[ {self.tracker.name} ]   "
+               f"Smooth: {smooth_lbl}   "
+               f"Detections: {len(detections)}")
+        cv2.putText(display, hud,
+                    (10, display.shape[0] - 12),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
-        return frame
+        # 5. Send interactions over OSC
+        for d in detections:
+            self.send_interaction(d["id"], d["x"], d["y"])
 
+        return display
+
+    # ------------------------------------------------------------------
+    # Camera helpers
+    # ------------------------------------------------------------------
+    def _open_cap(self, idx: int):
+        cap = cv2.VideoCapture(idx)
+        if cap.isOpened():
+            self._cam_idx = idx
+        return cap
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
     def run(self):
-        # Fallback for headless or development environments
-        cap = cv2.VideoCapture(0)
+        cap = self._open_cap(0)
         if not cap.isOpened():
-            print("WARNING: No camera found. Running in Virtual Hand Simulation mode...")
+            print("WARNING: No camera found.  Running virtual simulation...")
             self.run_virtual_sim()
             return
 
-        cv2.namedWindow('LightTable CV Debug')
-        cv2.moveWindow('LightTable CV Debug', 0, 0) # Position camera view at top left
-        cv2.setMouseCallback('LightTable CV Debug', self.on_mouse)
-        
-        print("CV Layer Started. Click 4 corners of projection surface to calibrate.")
-        
-        while cap.isOpened():
-            success, frame = cap.read()
-            if not success: break
+        cv2.namedWindow(_DEBUG_WIN)
+        cv2.setMouseCallback(_DEBUG_WIN, self.on_mouse)
+        self.ui.create_window(self.tracker)
 
-            debug_frame = self.process_frame(frame)
-            cv2.imshow('LightTable CV Debug', debug_frame)
-            
-            # Check for remote commands from Godot
-            # This is a bit advanced for a single UDP port, so we check for 'q' or exit signals
+        print("\nLightTable CV ready.")
+        print("  Esc / q    quit")
+        print("  c          reset calibration")
+        print("  a          freeze & select object  (Object tracker only)")
+        print("  x          clear tracked objects   (Object tracker only)\n")
+
+        while cap.isOpened():
+            ok, frame = cap.read()
+            if not ok:
+                break
+
+            settings = self.ui.read()
+
+            # ---- Tracker switch ----
+            new_tidx = settings["Tracker"]
+            if new_tidx != self._tracker_idx:
+                self._tracker_idx = new_tidx
+                self.tracker = TRACKER_CLASSES[new_tidx]()
+                self.ui.rebuild_for_tracker(self.tracker)
+                self.kalman.clear()
+                self.ema.clear()
+
+            # ---- Camera switch ----
+            new_cidx = settings["Camera Idx"]
+            if new_cidx != self._cam_idx:
+                cap.release()
+                new_cap = self._open_cap(new_cidx)
+                if new_cap.isOpened():
+                    cap = new_cap
+                    self.tracker.reset()
+                else:
+                    print(f"Camera {new_cidx} unavailable, staying on {self._cam_idx}")
+                    cap = self._open_cap(self._cam_idx)
+
+            frame   = self._adjust_frame(frame, settings)
+            display = self.process_frame(frame, settings)
+            cv2.imshow(_DEBUG_WIN, display)
+
             key = cv2.waitKey(5) & 0xFF
-            if key == 27 or key == ord('q'): break
-            if key == ord('c'): self.calibration.points = []
+            if key in (27, ord("q")):
+                break
+            if key == ord("c"):
+                self.calibration.points = []
+            if key == ord("a") and isinstance(self.tracker, ObjectTracker):
+                ok2, freeze = cap.read()
+                if ok2:
+                    freeze = self._adjust_frame(freeze, settings)
+                    win_sel = "Select Object (Enter=confirm  Esc=cancel)"
+                    bbox = cv2.selectROI(win_sel, freeze, fromCenter=False, showCrosshair=True)
+                    cv2.destroyWindow(win_sel)
+                    self.tracker.add_object(freeze, bbox)
+            if key == ord("x") and isinstance(self.tracker, ObjectTracker):
+                self.tracker.clear()
+                print("Object tracker cleared.")
 
         cap.release()
         cv2.destroyAllWindows()
 
+    # ------------------------------------------------------------------
+    # Headless virtual simulation
+    # ------------------------------------------------------------------
     def run_virtual_sim(self):
-        """Minimal internal simulation if hardware is missing"""
-        print("Generating fake interaction data for testing Visual Layer...")
-        t = 0
+        print("Virtual simulation running (Ctrl+C to stop)...")
+        t = 0.0
         try:
             while True:
                 t += 0.05
-                x = 0.5 + 0.2 * np.sin(t)
-                y = 0.5 + 0.2 * np.cos(t)
-                self.send_interaction(99, x * 1920, y * 1080) # Simulate calibrated pixels
+                self.send_interaction(
+                    0,
+                    (0.5 + 0.3 * np.sin(t)) * 1920,
+                    (0.5 + 0.3 * np.cos(t)) * 1080,
+                )
                 time.sleep(0.016)
         except KeyboardInterrupt:
             pass
 
-if __name__ == "__main__":
 
-    lt_cv = LightTableCV()
-    lt_cv.run()
+if __name__ == "__main__":
+    LightTableCV().run()
+
