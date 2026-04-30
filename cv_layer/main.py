@@ -2,16 +2,16 @@ import cv2
 import numpy as np
 import time
 
-from bridge      import InteractionBridge
-from calibration import Calibration
-from camera_ui   import CameraUI, TRACKER_NAMES, SMOOTH_LABELS
-from smoothing   import KalmanSmoother, ExponentialSmoother
-from trackers    import (
+from bridge         import InteractionBridge
+from calibration    import Calibration
+from control_window import ControlWindow, TRACKER_NAMES, SMOOTH_LABELS
+from smoothing      import KalmanSmoother, ExponentialSmoother
+from trackers       import (
     HandTracker, BlobTracker, MotionTracker,
     ColorTracker, EdgeTracker, ObjectTracker,
 )
 
-# Order must match TRACKER_NAMES in camera_ui.py
+# Order must match TRACKER_NAMES in control_window.py
 TRACKER_CLASSES = [
     HandTracker,
     BlobTracker,
@@ -21,21 +21,21 @@ TRACKER_CLASSES = [
     ObjectTracker,
 ]
 
-_DEBUG_WIN = "LightTable CV"
-
 
 class LightTableCV:
 
     def __init__(self, osc_ip="127.0.0.1", osc_port=7000):
         self.bridge      = InteractionBridge(osc_ip, osc_port)
         self.calibration = Calibration()
-        self.ui          = CameraUI()
+        self.ui          = ControlWindow()
         self.kalman      = KalmanSmoother()
         self.ema         = ExponentialSmoother(alpha=0.35)
 
-        self._tracker_idx = 0
-        self._cam_idx     = 0
-        self.tracker      = TRACKER_CLASSES[0]()
+        self._tracker_idx  = 0
+        self._cam_idx      = 0
+        self._current_res  = (640, 480)   # last applied camera resolution
+        self.tracker       = TRACKER_CLASSES[0]()
+        self.ui.rebuild_for_tracker(self.tracker)
 
     # ------------------------------------------------------------------
     # OSC output
@@ -79,16 +79,7 @@ class LightTableCV:
         beta  = s["Brightness"] - 50     # -50..+50 offset
         return cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
 
-    # ------------------------------------------------------------------
-    # Mouse callback (calibration)
-    # ------------------------------------------------------------------
-    def on_mouse(self, event, x, y, flags, param):
-        if event == cv2.EVENT_LBUTTONDOWN and len(self.calibration.points) < 4:
-            self.calibration.points.append([x, y])
-            print(f"[{len(self.calibration.points)}/4] Calibration point: ({x}, {y})")
-            if len(self.calibration.points) == 4:
-                self.calibration.get_warp_matrix((1, 1))
-                print("--- CALIBRATION COMPLETE ---")
+    # Mouse callback no longer needed — calibration uses Tkinter click binding
 
     # ------------------------------------------------------------------
     # Main per-frame processing (tracker runs on clean frame; overlays on display)
@@ -177,9 +168,16 @@ class LightTableCV:
             self.run_virtual_sim()
             return
 
-        cv2.namedWindow(_DEBUG_WIN)
-        cv2.setMouseCallback(_DEBUG_WIN, self.on_mouse)
-        self.ui.create_window(self.tracker)
+        # Register calibration click handler on preview label
+        def _on_click(x: int, y: int):
+            if len(self.calibration.points) < 4:
+                self.calibration.points.append([x, y])
+                print(f"[{len(self.calibration.points)}/4] Calibration point: ({x}, {y})")
+                if len(self.calibration.points) == 4:
+                    self.calibration.get_warp_matrix((1, 1))
+                    print("--- CALIBRATION COMPLETE ---")
+
+        self.ui.set_click_callback(_on_click)
 
         print("\nLightTable CV ready.")
         print("  Esc / q    quit")
@@ -187,7 +185,7 @@ class LightTableCV:
         print("  a          freeze & select object  (Object tracker only)")
         print("  x          clear tracked objects   (Object tracker only)\n")
 
-        while cap.isOpened():
+        while cap.isOpened() and self.ui.is_open():
             ok, frame = cap.read()
             if not ok:
                 break
@@ -216,16 +214,27 @@ class LightTableCV:
                     print(f"Camera {new_cidx} unavailable, staying on {prev}")
                     cap = self._open_cap(prev)
 
+            # ---- Resolution change ----
+            new_res = settings["Resolution"]
+            if new_res != self._current_res:
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH,  new_res[0])
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, new_res[1])
+                self._current_res = new_res
+
             frame   = self._adjust_frame(frame, settings)
             display = self.process_frame(frame, settings)
-            cv2.imshow(_DEBUG_WIN, display)
 
-            key = cv2.waitKey(5) & 0xFF
-            if key in (27, ord("q")):
+            # Push to unified Tkinter preview (no-op when hidden)
+            self.ui.update_preview(display)
+
+            # Drive Tkinter event loop; collect keypresses
+            keys = self.ui.tick()
+
+            if "esc" in keys or "q" in keys:
                 break
-            if key == ord("c"):
+            if "c" in keys:
                 self.calibration.points = []
-            if key == ord("a") and isinstance(self.tracker, ObjectTracker):
+            if "a" in keys and isinstance(self.tracker, ObjectTracker):
                 ok2, freeze = cap.read()
                 if ok2:
                     freeze = self._adjust_frame(freeze, settings)
@@ -233,7 +242,7 @@ class LightTableCV:
                     bbox = cv2.selectROI(win_sel, freeze, fromCenter=False, showCrosshair=True)
                     cv2.destroyWindow(win_sel)
                     self.tracker.add_object(freeze, bbox)
-            if key == ord("x") and isinstance(self.tracker, ObjectTracker):
+            if "x" in keys and isinstance(self.tracker, ObjectTracker):
                 self.tracker.clear()
                 print("Object tracker cleared.")
 
