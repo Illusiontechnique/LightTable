@@ -10,7 +10,8 @@ func _ready():
 func add_header():
 	var backdrop = ColorRect.new()
 	backdrop.color = Color(0.0, 0.0, 0.0, 1.0)
-	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	backdrop.position = Vector2.ZERO
+	backdrop.size = get_viewport_rect().size
 	add_child(backdrop)
 	move_child(backdrop, 0)
 

@@ -1,141 +1,275 @@
 extends Node2D
 
-const SAMPLE_RATE := 44100.0
-const NOTE_DURATION := 0.36
-const NOTE_FREQUENCIES := [261.63, 277.18, 293.66, 311.13, 329.63, 349.23, 369.99, 392.00, 415.30, 440.00, 466.16, 493.88]
+# ─────────────────────────────────────────────────────────────────────────────
+#  PIANO  —  12 chromatic keys centred on screen, rainbow palette.
+#
+#  Sound synthesis:  polyphonic additive synthesis, 5 harmonic partials with
+#  individual ADSR envelopes that mimic a struck string:
+#    • Very fast attack (1–2 ms)
+#    • Exponential decay into a long sustain
+#    • Smooth release when the key is lifted
+#  Each partial decays at a different rate (higher partials die faster),
+#  which gives the natural "bright at onset, mellow over time" piano timbre.
+# ─────────────────────────────────────────────────────────────────────────────
+
+const SAMPLE_RATE  := 44100.0
+const NOTE_DUR     := 2.20      # seconds a key stays "ringing" if held
+
+const NOTE_FREQ := [
+	261.63, 277.18, 293.66, 311.13, 329.63, 349.23,
+	369.99, 392.00, 415.30, 440.00, 466.16, 493.88
+]
 const NOTE_NAMES := ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
-@export var key_width := 80
-@export var white_keys := 12
+# Harmonic partial: [freq_mult, amp, decay_rate]
+# decay_rate = how quickly that partial fades (higher = faster)
+const PARTIALS := [
+	[1.0,  0.60, 1.10],
+	[2.0,  0.28, 1.55],
+	[3.0,  0.14, 2.20],
+	[4.0,  0.07, 3.80],
+	[6.0,  0.03, 6.00],
+]
 
-var key_nodes: Array = []
-var key_states: Array = []
-var voices: Array = []
+const KEY_W    := 88     # key width (incl. gap)
+const KEY_GAP  := 5
+const KEY_H    := 460
+const NUM_KEYS := 12
 
-func _ready():
-	add_stage()
-	setup_audio()
-	setup_piano()
+var vp_size    : Vector2
+var audio_level : float = 0.0
 
-func add_stage():
-	var backdrop = ColorRect.new()
-	backdrop.color = Color(0.0, 0.0, 0.0, 1.0)
-	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(backdrop)
-	move_child(backdrop, 0)
+var _key_nodes  : Array = []
+var _key_glow   : Array = []    # Label glow overlays
+var _key_states : Array = []
+var _key_colors : Array = []    # resting rainbow colours
 
-	var title = Label.new()
-	title.text = "PIANO / SYNTH KEYS"
-	title.add_theme_font_size_override("font_size", 34)
-	title.modulate = Color(0.9, 0.95, 1.0)
-	title.position = Vector2(24, 18)
-	add_child(title)
+var _voices : Array = []   # one voice per key
 
-	var subtitle = Label.new()
-	subtitle.text = "Tap the keys with your hand or mouse"
-	subtitle.add_theme_font_size_override("font_size", 15)
-	subtitle.modulate = Color(0.8, 0.9, 1.0, 0.8)
-	subtitle.position = Vector2(24, 56)
-	add_child(subtitle)
+# ─────────────────────────────────────────────────────────────────────────────
 
-func setup_piano():
-	for i in range(white_keys):
-		var key = ColorRect.new()
-		key.size = Vector2(key_width - 6, 420)
-		key.position = Vector2(80 + i * key_width, 250)
-		key.color = Color(0.92, 0.92, 0.96)
+func _ready() -> void:
+	vp_size = get_viewport_rect().size
+	_add_stage()
+	_setup_voices()
+	_build_keys()
+
+
+func _add_stage() -> void:
+	var bg := ColorRect.new()
+	bg.color    = Color(0.0, 0.0, 0.0, 1.0)
+	bg.position = Vector2.ZERO
+	bg.size     = get_viewport_rect().size
+	add_child(bg)
+	move_child(bg, 0)
+
+	var t := Label.new()
+	t.text = "PIANO"
+	t.add_theme_font_size_override("font_size", 34)
+	t.modulate = Color(0.9, 0.95, 1.0)
+	t.position = Vector2(24, 18)
+	add_child(t)
+
+	var s := Label.new()
+	s.text = "Touch the keys · polyphonic · rainbow"
+	s.add_theme_font_size_override("font_size", 15)
+	s.modulate = Color(0.8, 0.9, 1.0, 0.8)
+	s.position = Vector2(24, 56)
+	add_child(s)
+
+
+func set_audio_level(level: float) -> void:
+	audio_level = clamp(level, 0.0, 1.0)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Keys
+# ─────────────────────────────────────────────────────────────────────────────
+
+func _build_keys() -> void:
+	var total_w : float = NUM_KEYS * KEY_W - KEY_GAP
+	var start_x : float = (vp_size.x - total_w) * 0.5
+	var start_y : float = (vp_size.y - KEY_H) * 0.5 + 20.0
+
+	for i in range(NUM_KEYS):
+		# Rainbow resting colour: vivid, dark-stage friendly
+		var hue   : float = float(i) / float(NUM_KEYS)
+		var col   : Color = Color.from_hsv(hue, 0.70, 0.88)
+		_key_colors.append(col)
+
+		# Key body
+		var key := ColorRect.new()
+		key.size     = Vector2(KEY_W - KEY_GAP, KEY_H)
+		key.position = Vector2(start_x + i * KEY_W, start_y)
+		key.color    = col
 		add_child(key)
+		_key_nodes.append(key)
+		_key_states.append(false)
 
-		var label = Label.new()
-		label.text = NOTE_NAMES[i]
-		label.position = Vector2(0, 350)
-		label.size = Vector2(key_width - 6, 30)
-		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		label.modulate = Color.BLACK
-		key.add_child(label)
+		# Subtle top highlight strip
+		var hi := ColorRect.new()
+		hi.size     = Vector2(KEY_W - KEY_GAP, 6)
+		hi.position = Vector2(0, 0)
+		hi.color    = Color(1, 1, 1, 0.22)
+		key.add_child(hi)
 
-		key_nodes.append(key)
-		key_states.append(false)
+		# Note label at bottom of key
+		var lbl := Label.new()
+		lbl.text = NOTE_NAMES[i]
+		lbl.add_theme_font_size_override("font_size", 20)
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lbl.size     = Vector2(KEY_W - KEY_GAP, 32)
+		lbl.position = Vector2(0, KEY_H - 38)
+		lbl.modulate = Color(0, 0, 0, 0.7)
+		key.add_child(lbl)
 
-func setup_audio():
-	for i in range(NOTE_FREQUENCIES.size()):
-		var player = AudioStreamPlayer.new()
-		var stream = AudioStreamGenerator.new()
-		stream.mix_rate = SAMPLE_RATE
-		stream.buffer_length = 0.2
-		player.stream = stream
-		player.volume_db = -10.0
+		# Glow flash node (full-key white overlay, fades on hit)
+		var glow := ColorRect.new()
+		glow.size     = Vector2(KEY_W - KEY_GAP, KEY_H)
+		glow.position = Vector2(0, 0)
+		glow.color    = Color(1, 1, 1, 0.0)
+		key.add_child(glow)
+		_key_glow.append(glow)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Audio
+# ─────────────────────────────────────────────────────────────────────────────
+
+func _setup_voices() -> void:
+	for i in range(NUM_KEYS):
+		var player := AudioStreamPlayer.new()
+		var stream := AudioStreamGenerator.new()
+		stream.mix_rate    = SAMPLE_RATE
+		stream.buffer_length = 0.25
+		player.stream      = stream
+		player.volume_db   = -8.0
 		add_child(player)
 		player.play()
 
-		voices.append({
-			"player": player,
-			"playback": player.get_stream_playback() as AudioStreamGeneratorPlayback,
-			"freq": NOTE_FREQUENCIES[i],
-			"phase": 0.0,
-			"remaining": 0.0,
-			"envelope": 0.0
+		# Per-partial state: [phase, envelope_amp]
+		var partial_states : Array = []
+		for p in PARTIALS:
+			partial_states.append([0.0, 0.0])   # [phase, amp]
+
+		_voices.append({
+			"player":    player,
+			"playback":  player.get_stream_playback() as AudioStreamGeneratorPlayback,
+			"freq":      NOTE_FREQ[i],
+			"partial":   partial_states,
+			"remaining": 0.0,   # time left in note
+			"held":      false,
+			"release":   false, # fading out after key lifted
+			"rel_env":   0.0,   # global release envelope
 		})
 
-func _process(_delta):
-	var interactions = get_parent().get_node_or_null("Interactions")	
-	if interactions == null:
-		update_audio()
-		return
+# ─────────────────────────────────────────────────────────────────────────────
 
-	for i in range(key_nodes.size()):
-		var key = key_nodes[i]
-		var pressed := false
-		for touch in interactions.get_children():
-			if key.get_global_rect().has_point(touch.global_position):
-				pressed = true
-				break
+func _trigger_note(idx: int) -> void:
+	var v : Dictionary = _voices[idx]
+	v["remaining"] = NOTE_DUR
+	v["held"]      = true
+	v["release"]   = false
+	v["rel_env"]   = 1.0
+	# Reset all partial phases & envelopes to full
+	for j in range(PARTIALS.size()):
+		v["partial"][j][0] = 0.0
+		v["partial"][j][1] = float(PARTIALS[j][1])
+	_voices[idx] = v
 
-		if pressed and not key_states[i]:
-			trigger_note(i)
-		key_states[i] = pressed
-		key.color = Color(0.18, 0.86, 1.0) if pressed else Color(0.92, 0.92, 0.96)
 
-	update_audio()
+func _release_note(idx: int) -> void:
+	var v : Dictionary = _voices[idx]
+	v["held"]    = false
+	v["release"] = true
+	_voices[idx] = v
 
-func trigger_note(index: int):
-	var voice = voices[index]
-	voice.remaining = NOTE_DURATION
-	voice.envelope = 1.0
-	voice.phase = 0.0
-	voices[index] = voice
+# ─────────────────────────────────────────────────────────────────────────────
 
-func update_audio():
-	for i in range(voices.size()):
-		var voice = voices[i]
-		var playback: AudioStreamGeneratorPlayback = voice.playback
+func _process(delta: float) -> void:
+	var interactions := get_parent().get_node_or_null("Interactions")
+
+	# ── Key hit detection ──────────────────────────────────────────────
+	for i in range(NUM_KEYS):
+		var key     : ColorRect = _key_nodes[i]
+		var pressed : bool      = false
+
+		if interactions:
+			for touch in interactions.get_children():
+				if key.get_global_rect().has_point(touch.global_position + touch.pivot_offset):
+					pressed = true
+					break
+
+		var was_pressed : bool = _key_states[i]
+
+		if pressed and not was_pressed:
+			_trigger_note(i)
+		elif not pressed and was_pressed:
+			_release_note(i)
+
+		_key_states[i] = pressed
+
+		# ── Visuals ──────────────────────────────────────────────────
+		var hue      : float = float(i) / float(NUM_KEYS)
+		if pressed:
+			# Bright saturated version while held
+			key.color = Color.from_hsv(hue, 1.0, 1.0)
+			key.position.y = _key_nodes[i].position.y + 5.0 * (1.0 if pressed else 0.0)
+		else:
+			key.color = _key_colors[i]
+
+		# Glow flash decays
+		var glow : ColorRect = _key_glow[i]
+		if glow.color.a > 0.0:
+			glow.color.a = max(0.0, glow.color.a - delta * 4.5)
+		if pressed and not was_pressed:
+			glow.color.a = 0.65
+
+	# ── Audio synthesis ────────────────────────────────────────────────
+	_update_audio(delta)
+
+
+func _update_audio(delta: float) -> void:
+	for i in range(_voices.size()):
+		var v        : Dictionary                  = _voices[i]
+		var playback : AudioStreamGeneratorPlayback = v["playback"]
 		if playback == null:
 			continue
 
-		var frames_to_push = mini(playback.get_frames_available(), 512)
-		for _frame in range(frames_to_push):
-			var env := 0.0
-			if voice.remaining > 0.0:
-				voice.remaining -= 1.0 / SAMPLE_RATE
-				var note_progress = clamp(1.0 - (voice.remaining / NOTE_DURATION), 0.0, 1.0)
-				env = pow(1.0 - note_progress, 1.7)
-				if env < 0.02:
-					env = 0.02
-			else:
-				voice.envelope = move_toward(voice.envelope, 0.0, 0.03)
-				env = voice.envelope
+		var frames : int = mini(playback.get_frames_available(), 512)
 
-			var sample = piano_sample(voice.phase, voice.freq, env)
+		for _f in range(frames):
+			var sample : float = 0.0
+			var freq   : float = v["freq"]
+			var any_active : bool = false
+
+			# ── Per-partial synthesis ────────────────────────────────
+			for j in range(PARTIALS.size()):
+				var p_cfg  : Array = PARTIALS[j]
+				var p_mult : float = float(p_cfg[0])
+				var p_amp  : float = float(p_cfg[1])
+				var p_dec  : float = float(p_cfg[2])
+				var ps     : Array = v["partial"][j]   # [phase, amp]
+
+				if ps[1] < 0.0001:
+					continue
+				any_active = true
+
+				# Sine oscillator for this partial
+				sample += sin(ps[0]) * ps[1]
+
+				# Advance phase
+				ps[0] += TAU * freq * p_mult / SAMPLE_RATE
+				if ps[0] > TAU:
+					ps[0] -= TAU
+
+				# Decay envelope: held → slow natural decay; released → fast release
+				if v["held"]:
+					ps[1] = max(0.0, ps[1] - (p_amp * p_dec * 0.8) / SAMPLE_RATE)
+				else:
+					ps[1] = max(0.0, ps[1] - (p_amp * p_dec * 5.5) / SAMPLE_RATE)
+
+			# Apply a global soft limiter
+			sample = clamp(sample * 0.22, -1.0, 1.0)
+
 			playback.push_frame(Vector2(sample, sample))
-			voice.phase += TAU * voice.freq / SAMPLE_RATE
-			if voice.phase > TAU:
-				voice.phase -= TAU
 
-		voices[i] = voice
-
-func piano_sample(phase: float, freq: float, env: float) -> float:
-	var fundamental = sin(phase)
-	var second = sin(phase * 2.0) * 0.35
-	var third = sin(phase * 3.0) * 0.18
-	var attack = exp(-fmod(Time.get_ticks_msec() / 1000.0 * freq, 1.0) * 2.0)
-	return (fundamental * 0.65 + second + third) * env * 0.18 * attack
+		_voices[i] = v

@@ -24,7 +24,8 @@ func _ready():
 func add_stage():
 	var bg = ColorRect.new()
 	bg.color = Color(0.0, 0.0, 0.0, 1.0)
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.position = Vector2.ZERO
+	bg.size = get_viewport_rect().size
 	add_child(bg)
 
 	var moon = Polygon2D.new()
