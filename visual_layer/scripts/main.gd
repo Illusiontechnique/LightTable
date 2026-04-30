@@ -413,6 +413,7 @@ func load_content_scene(script_path: String):
 	active_scene = new_node
 	background.visible = false
 	log_message("Loaded Scene: " + script_path)
+	LTLog.event("scene_load", {"scene": script_path, "fps": Engine.get_frames_per_second()})
 
 func _on_restart_cam_pressed():
 	log_message("Restarting CV Layer...")
@@ -433,6 +434,7 @@ func _on_sim_toggled(button_pressed):
 
 func log_message(msg: String):
 	log_text.append_text("\n[color=gray]" + Time.get_time_string_from_system() + "[/color] " + msg)
+	LTLog.info(msg)
 
 func _input(event):
 	if event.is_action_pressed("ui_cancel"): # ESC key
@@ -506,3 +508,4 @@ func _on_interaction_received(id: int, pos: Vector2, state: String):
 	
 	if id != 99 and state == "press": # Only log non-simulated real events
 		log_message("Interaction Start: ID " + str(id))
+		LTLog.event("touch", {"id": id, "x": snapped(pos.x, 0.001), "y": snapped(pos.y, 0.001)})

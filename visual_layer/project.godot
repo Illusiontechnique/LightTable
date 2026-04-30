@@ -21,3 +21,7 @@ window/stretch/mode="canvas_items"
 [network]
 
 limits/debugger/max_chars_per_second=32768
+
+[autoload]
+
+LTLog="*res://scripts/logger.gd"

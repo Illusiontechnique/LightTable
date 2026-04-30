@@ -28,21 +28,28 @@ var _audio_smooth : float = 0.0
 # ─────────────────────────────────────────────────────────────────────────────
 
 func _ready() -> void:
-	# Dark ocean backdrop so nothing bleeds through at the edges
+	var vp_size := get_viewport_rect().size
+
+	# Dark ocean backdrop — explicit size since parent is Node2D (anchors don't apply)
 	var bg := ColorRect.new()
 	bg.color = Color(0.01, 0.03, 0.10)
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.position = Vector2.ZERO
+	bg.size = vp_size
 	add_child(bg)
 	move_child(bg, 0)
 
 	# Full-screen water shader surface
 	water_surface = ColorRect.new()
 	water_surface.name = "WaterSurface"
-	water_surface.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	water_surface.position = Vector2.ZERO
+	water_surface.size = vp_size
 	water_material = ShaderMaterial.new()
 	water_material.shader = load("res://assets/shaders/water.gdshader")
 	water_surface.material = water_material
 	add_child(water_surface)
+
+	# Re-size on window resize
+	get_viewport().size_changed.connect(_on_viewport_size_changed)
 
 	# Prime the aspect ratio before the first frame
 	_update_aspect()
@@ -65,6 +72,14 @@ func _update_aspect() -> void:
 	var vp := get_viewport_rect().size
 	if vp.y > 0.0:
 		water_material.set_shader_parameter("aspect_ratio", vp.x / vp.y)
+
+
+func _on_viewport_size_changed() -> void:
+	var vp := get_viewport_rect().size
+	water_surface.size = vp
+	# Resize bg too (first child)
+	if get_child_count() > 0 and get_child(0) is ColorRect:
+		get_child(0).size = vp
 
 # ─────────────────────────────────────────────────────────────────────────────
 
