@@ -18,6 +18,8 @@ class BlobTracker(BaseTracker):
         self._circularity  = 20    # trackbar 0-100 → 0.0-1.0
         self._threshold    = 100   # min intensity threshold for blob detection
         self._invert       = 0
+        self._use_diff     = 0     # 1 = diff against previous frame before detecting
+        self._prev_gray    = None
         self._last_kp      = []
         self._init_detector()
 
@@ -38,6 +40,18 @@ class BlobTracker(BaseTracker):
     # ------------------------------------------------------------------
     def process(self, frame) -> list:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        if self._use_diff:
+            if self._prev_gray is not None and self._prev_gray.shape == gray.shape:
+                gray = cv2.absdiff(gray, self._prev_gray)
+            else:
+                # First frame in diff mode — no previous yet; produce empty detection
+                self._prev_gray = gray.copy()
+                return []
+            self._prev_gray = gray.copy()
+        else:
+            self._prev_gray = None  # reset when diff mode is turned off
+
         if self._invert:
             gray = cv2.bitwise_not(gray)
         self._last_kp = self.detector.detect(gray)
@@ -60,6 +74,7 @@ class BlobTracker(BaseTracker):
             {"name": "Circularity", "max": 100,   "default": 20},
             {"name": "Threshold",   "max": 255,   "default": 100},
             {"name": "Invert",      "max": 1,     "default": 0},
+            {"name": "Frame Diff",  "max": 1,     "default": 0},
         ]
 
     def on_trackbar(self, name, value):
@@ -68,7 +83,9 @@ class BlobTracker(BaseTracker):
         elif name == "Circularity": self._circularity = value;            self._init_detector()
         elif name == "Threshold":   self._threshold   = value;            self._init_detector()
         elif name == "Invert":      self._invert      = value
+        elif name == "Frame Diff":  self._use_diff    = value; self._prev_gray = None
 
     def reset(self):
-        self._last_kp = []
+        self._last_kp  = []
+        self._prev_gray = None
         self._init_detector()

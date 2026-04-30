@@ -45,17 +45,23 @@ class CameraUI:
     # Internal helpers
     # ------------------------------------------------------------------
     @staticmethod
-    def _blank():
-        img = np.zeros((55, 520, 3), dtype=np.uint8)
+    def _blank(tracker_name: str = ""):
+        img = np.zeros((70, 520, 3), dtype=np.uint8)
         cv2.putText(
             img, "LightTable CV  |  Settings",
-            (12, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (180, 180, 180), 1,
+            (12, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (140, 140, 140), 1,
         )
+        if tracker_name:
+            label = f"Tracker:  {tracker_name}"
+            cv2.putText(
+                img, label,
+                (12, 54), cv2.FONT_HERSHEY_DUPLEX, 0.70, (60, 220, 255), 1,
+            )
         return img
 
     def _build(self, tracker):
         cv2.namedWindow(_WIN, cv2.WINDOW_NORMAL)
-        cv2.imshow(_WIN, self._blank())
+        cv2.imshow(_WIN, self._blank(tracker.name))
         cv2.waitKey(1)
 
         for name, max_val, default in _FIXED_BARS:

@@ -223,37 +223,41 @@ func _process(delta: float) -> void:
 		p["life"] -= delta
 		if p["life"] <= 0.0:
 			dead.append(i)
-			(p["node"] as Node2D).queue_free()
+			(p["node"] as Node).queue_free()
 			continue
 
 		var frac : float = clamp(p["life"] / p["max_life"], 0.0, 1.0)
-		var node : Node2D = p["node"] as Node2D
+		var node         = p["node"]   # untyped — particles use ColorRect, Line2D or Polygon2D
 		var vel  : Vector2 = p["vel"]
 
 		match p["type"]:
 			"fire":
-				node.position += vel * delta
-				vel.x          *= 0.96
-				vel.y          -= 30.0 * delta
-				p["vel"]        = vel
-				(node as ColorRect).color = Color.from_hsv(0.07 * frac, 1.0, 1.0, frac)
-				node.rotation  += delta * randf_range(1.0, 2.5)
+				var fn : ColorRect = node as ColorRect
+				fn.position += vel * delta
+				vel.x        *= 0.96
+				vel.y        -= 30.0 * delta
+				p["vel"]      = vel
+				fn.color      = Color.from_hsv(0.07 * frac, 1.0, 1.0, frac)
+				fn.rotation  += delta * randf_range(1.0, 2.5)
 			"wind":
-				node.position   += vel * delta
-				vel.x           += 90.0 * delta
-				p["vel"]         = vel
-				(node as ColorRect).color.a = frac * 0.85
+				var wn : ColorRect = node as ColorRect
+				wn.position  += vel * delta
+				vel.x        += 90.0 * delta
+				p["vel"]      = vel
+				wn.color.a    = frac * 0.85
 			"water":
+				var rn : Line2D = node as Line2D
 				var growth : float = p["growth"]
 				var sc     : float = 1.0 + (1.0 - frac) * growth * 0.04
-				node.scale = Vector2(sc, sc)
-				(node as Line2D).default_color.a = frac * 0.75
+				rn.scale               = Vector2(sc, sc)
+				rn.default_color.a     = frac * 0.75
 			"earth":
-				node.position += vel * delta
-				vel.y         += 300.0 * delta
-				p["vel"]       = vel
-				node.rotation += delta * 2.5
-				(node as Polygon2D).color.a = frac
+				var en : Polygon2D = node as Polygon2D
+				en.position += vel * delta
+				vel.y        += 300.0 * delta
+				p["vel"]      = vel
+				en.rotation  += delta * 2.5
+				en.color.a    = frac
 
 		_particles[i] = p
 

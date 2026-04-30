@@ -384,6 +384,12 @@ func setup_scene_buttons():
 	welcome_btn.pressed.connect(show_welcome_screen)
 	hardware_section.add_child(welcome_btn)
 
+	var clear_btn = Button.new()
+	clear_btn.text = "Clear Cursors  [T]"
+	clear_btn.custom_minimum_size = Vector2(0, 34)
+	clear_btn.pressed.connect(_on_clear_interactions_pressed)
+	hardware_section.add_child(clear_btn)
+
 	var scene_section = create_dashboard_section(btn_container, "SCENES", Color(1.0, 0.88, 0.55, 0.75))
 	
 	var scenes = {
@@ -452,6 +458,9 @@ func _input(event):
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_C:
 		toggle_console_visibility()
 
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_T:
+		interaction_container.visible = !interaction_container.visible
+
 	if welcome_overlay and event is InputEventMouseButton and event.pressed:
 		dismiss_welcome_screen()
 
@@ -487,6 +496,10 @@ func set_console_visible(visible_state: bool):
 func refresh_console_toggle_label():
 	if console_toggle_button:
 		console_toggle_button.text = "Hide Console" if console_visible else "Show Console"
+
+func _on_clear_interactions_pressed():
+	for c in interaction_container.get_children():
+		c.queue_free()
 
 func _on_interaction_received(id: int, pos: Vector2, state: String):
 	# Map normalized 0-1 to screen size
