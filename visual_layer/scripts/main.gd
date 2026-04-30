@@ -35,6 +35,7 @@ func _ready():
 	var err = receiver.interaction_received.connect(_on_interaction_received)
 	if err != OK:
 		log_message("Error connecting signal!")
+	receiver.remote_command.connect(_on_remote_command)
 	
 	sim_toggle.toggled.connect(_on_sim_toggled)
 	
@@ -500,6 +501,29 @@ func refresh_console_toggle_label():
 func _on_clear_interactions_pressed():
 	for c in interaction_container.get_children():
 		c.queue_free()
+
+# ─── Phone web remote commands ────────────────────────────────────────────────
+func _on_remote_command(cmd: Dictionary) -> void:
+	var c : String = cmd.get("cmd", "")
+	match c:
+		"load_scene":
+			var script : String = cmd.get("script", "")
+			if script != "":
+				load_content_scene(script)
+				log_message("Remote: loaded " + cmd.get("scene", script))
+		"set_audio":
+			var fl : float = float(cmd.get("floor",   audio_input_floor))
+			var cl : float = float(cmd.get("ceiling", audio_input_ceiling))
+			_on_audio_floor_changed(fl)
+			_on_audio_ceiling_changed(cl)
+			if audio_floor_slider:
+				audio_floor_slider.value = fl
+			if audio_ceiling_slider:
+				audio_ceiling_slider.value = cl
+			log_message("Remote: mic floor=%.3f ceiling=%.3f" % [fl, cl])
+		"clear_cursors":
+			_on_clear_interactions_pressed()
+			log_message("Remote: cursors cleared")
 
 func _on_interaction_received(id: int, pos: Vector2, state: String):
 	# Map normalized 0-1 to screen size

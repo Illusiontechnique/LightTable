@@ -4,6 +4,7 @@ var server: UDPServer
 var port: int = 7000
 
 signal interaction_received(id: int, pos: Vector2, state: String)
+signal remote_command(cmd: Dictionary)
 
 func _ready():
 	server = UDPServer.new()
@@ -26,7 +27,10 @@ func _parse_json_packet(packet: PackedByteArray):
 	var error = json.parse(json_string)
 	if error == OK:
 		var data = json.data
-		if data.has("type") and data["type"] == "interaction":
-			var pos = Vector2(data["x"], data["y"])
-			interaction_received.emit(int(data["id"]), pos, data["state"])
+		if data.has("type"):
+			if data["type"] == "interaction":
+				var pos = Vector2(data["x"], data["y"])
+				interaction_received.emit(int(data["id"]), pos, data["state"])
+			elif data["type"] == "command":
+				remote_command.emit(data)
 

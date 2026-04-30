@@ -6,6 +6,7 @@ from bridge         import InteractionBridge
 from calibration    import Calibration
 from control_window import ControlWindow, TRACKER_NAMES, SMOOTH_LABELS
 from smoothing      import KalmanSmoother, ExponentialSmoother
+from web_remote     import ControlState, WebRemote
 from trackers       import (
     HandTracker, BlobTracker, MotionTracker,
     ColorTracker, EdgeTracker, ObjectTracker,
@@ -33,9 +34,14 @@ class LightTableCV:
 
         self._tracker_idx  = 0
         self._cam_idx      = 0
-        self._current_res  = (640, 480)   # last applied camera resolution
+        self._current_res  = (640, 480)
         self.tracker       = TRACKER_CLASSES[0]()
         self.ui.rebuild_for_tracker(self.tracker)
+        self._last_detection_count = 0
+
+        # Phone web remote
+        self._ctrl_state = ControlState()
+        self._remote     = WebRemote(self._ctrl_state, godot_host=osc_ip, godot_port=osc_port)
 
     # ------------------------------------------------------------------
     # OSC output
@@ -88,6 +94,7 @@ class LightTableCV:
         # 1. Run tracker on the adjusted (but overlay-free) frame
         detections = self.tracker.process(frame)
         detections = self._smooth(settings["Smoothing"], settings["EMA Respons"], detections)
+        self._last_detection_count = len(detections)   # expose for status reporting
 
         # 2. Build display image
         if settings["Show Mask"] and hasattr(self.tracker, "_mask") and self.tracker._mask is not None:
@@ -179,6 +186,10 @@ class LightTableCV:
 
         self.ui.set_click_callback(_on_click)
 
+        # Start phone web remote
+        self._remote.start()
+        print(f"\nWeb remote: {self._remote.get_url()}  (PIN in remote_config.json)")
+
         print("\nLightTable CV ready.")
         print("  Esc / q    quit")
         print("  c          reset calibration")
@@ -221,8 +232,24 @@ class LightTableCV:
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, new_res[1])
                 self._current_res = new_res
 
+            # ---- Remote tracker change (phone web remote) ----
+            remote_tidx = self._ctrl_state.pop_tracker_request()
+            if remote_tidx is not None and remote_tidx != self._tracker_idx:
+                self._tracker_idx = remote_tidx
+                self.tracker = TRACKER_CLASSES[remote_tidx]()
+                self.ui.rebuild_for_tracker(self.tracker)
+                self.kalman.clear()
+                self.ema.clear()
+
             frame   = self._adjust_frame(frame, settings)
             display = self.process_frame(frame, settings)
+
+            # Update status for web remote
+            self._ctrl_state.update_status(
+                audio       = 0.0,   # audio is Godot-side; CV doesn't measure it
+                tracker_idx = self._tracker_idx,
+                detections  = getattr(self, "_last_detection_count", 0),
+            )
 
             # Push to unified Tkinter preview (no-op when hidden)
             self.ui.update_preview(display)
