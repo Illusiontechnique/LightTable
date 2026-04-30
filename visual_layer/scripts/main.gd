@@ -314,14 +314,9 @@ func show_welcome_screen():
 	qr_rect.modulate = Color(1.0, 1.0, 1.0, 0.92)
 	row.add_child(qr_rect)
 	var qr_abs : String = ProjectSettings.globalize_path("res://") + "assets/remote_qr.png"
-	var qr_weak : WeakRef = weakref(qr_rect)
-	get_tree().create_timer(1.5, false).timeout.connect(func():
-		var qr : TextureRect = qr_weak.get_ref() as TextureRect
-		if is_instance_valid(qr):
-			var img := Image.new()
-			if img.load(qr_abs) == OK:
-				qr.texture = ImageTexture.create_from_image(img)
-	)
+	var qr_img := Image.new()
+	if qr_img.load(qr_abs) == OK:
+		qr_rect.texture = ImageTexture.create_from_image(qr_img)
 
 	var info_col := VBoxContainer.new()
 	info_col.alignment = BoxContainer.ALIGNMENT_CENTER
