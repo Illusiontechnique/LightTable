@@ -562,6 +562,7 @@ func _on_clear_interactions_pressed():
 # ─── Phone web remote commands ────────────────────────────────────────────────
 func _on_remote_command(cmd: Dictionary) -> void:
 	var c : String = cmd.get("cmd", "")
+	print("[Remote] cmd=", c, " data=", cmd)
 	match c:
 		"load_scene":
 			var script : String = cmd.get("script", "")

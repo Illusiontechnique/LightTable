@@ -16,10 +16,10 @@ func _ready():
 
 func _process(_delta):
 	server.poll()
-	if server.is_connection_available():
-		var peer = server.take_connection()
-		var packet = peer.get_packet()
-		_parse_json_packet(packet)
+	while server.is_connection_available():
+		var peer := server.take_connection()
+		while peer.get_available_packets() > 0:
+			_parse_json_packet(peer.get_packet())
 
 func _parse_json_packet(packet: PackedByteArray):
 	var json_string = packet.get_string_from_utf8()
