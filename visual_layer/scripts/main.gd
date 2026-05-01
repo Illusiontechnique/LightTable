@@ -14,6 +14,9 @@ extends Node2D
 
 var active_scene = null
 var simulation_mode = true
+var scene_list: Array = []      # [{name, path}]
+var current_scene_index: int = -1
+var hand_skeleton_overlay: Node2D = null
 var audio_input_floor := 0.01
 var audio_input_ceiling := 0.18
 var audio_raw_level := 0.0
@@ -36,6 +39,14 @@ func _ready():
 	if err != OK:
 		log_message("Error connecting signal!")
 	receiver.remote_command.connect(_on_remote_command)
+	receiver.hand_skeleton_received.connect(_on_hand_skeleton_received)
+
+	# Hand skeleton overlay (drawn above content, below UI)
+	hand_skeleton_overlay = Node2D.new()
+	hand_skeleton_overlay.set_script(load("res://scripts/hand_skeleton_overlay.gd"))
+	hand_skeleton_overlay.name = "HandSkeletonOverlay"
+	add_child(hand_skeleton_overlay)
+	move_child(hand_skeleton_overlay, get_child_count() - 2) # just below $UI
 	
 	sim_toggle.toggled.connect(_on_sim_toggled)
 	
@@ -284,7 +295,7 @@ func show_welcome_screen():
 	help.bbcode_enabled = true
 	help.fit_content = true
 	help.scroll_active = false
-	help.text = "[center][color=white]TAB[/color] toggles the dashboard\n[color=white]ESC[/color] exits the app\n[color=white]Click[/color] or wait to enter[/center]"
+	help.text = "[center][color=white]TAB[/color] toggles the dashboard\n[color=white]← →[/color] cycle scenes   [color=white]T[/color] toggle pointers   [color=white]H[/color] hand skeleton\n[color=white]ESC[/color] exits the app\n[color=white]Click[/color] or wait to enter[/center]"
 	content.add_child(help)
 
 	# ── Remote access info ────────────────────────────────────────────
@@ -440,9 +451,9 @@ func setup_scene_buttons():
 	hardware_section.add_child(welcome_btn)
 
 	var clear_btn = Button.new()
-	clear_btn.text = "Clear Cursors  [T]"
+	clear_btn.text = "Toggle Pointers  [T]"
 	clear_btn.custom_minimum_size = Vector2(0, 34)
-	clear_btn.pressed.connect(_on_clear_interactions_pressed)
+	clear_btn.pressed.connect(func(): interaction_container.visible = !interaction_container.visible)
 	hardware_section.add_child(clear_btn)
 
 	var scene_section = create_dashboard_section(btn_container, "SCENES", Color(1.0, 0.88, 0.55, 0.75))
@@ -463,7 +474,11 @@ func setup_scene_buttons():
 		"Alphabet":       "res://scripts/content/alphabet_puzzle.gd",
 		"Bug":            "res://scripts/content/bug_scene.gd",
 	}
-	
+
+	scene_list.clear()
+	for s_name in scenes:
+		scene_list.append({"name": s_name, "path": scenes[s_name]})
+
 	for s_name in scenes:
 		var btn = Button.new()
 		btn.text = "Load " + s_name
@@ -482,6 +497,14 @@ func load_content_scene(script_path: String):
 	move_child(new_node, 0) # Keep it behind UI
 	active_scene = new_node
 	background.visible = false
+
+	# Track current index for arrow-key cycling
+	current_scene_index = -1
+	for i in scene_list.size():
+		if scene_list[i]["path"] == script_path:
+			current_scene_index = i
+			break
+
 	log_message("Loaded Scene: " + script_path)
 	LTLog.event("scene_load", {"scene": script_path, "fps": Engine.get_frames_per_second()})
 
@@ -489,7 +512,7 @@ func _on_restart_cam_pressed():
 	log_message("Restarting CV Layer...")
 	# Send a special command via UDP to Python to quit
 	var packet = JSON.stringify({"type": "command", "cmd": "quit"}).to_utf8_buffer()
-	receiver.socket.put_packet(packet)
+	receiver.peer.put_packet(packet)
 	
 	# Wait a moment for it to close, then re-launch
 	get_tree().create_timer(1.0).timeout.connect(func():
@@ -515,6 +538,20 @@ func _input(event):
 
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_T:
 		interaction_container.visible = !interaction_container.visible
+
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
+		if hand_skeleton_overlay:
+			hand_skeleton_overlay.show_skeleton = !hand_skeleton_overlay.show_skeleton
+
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_LEFT:
+		if scene_list.size() > 0:
+			current_scene_index = posmod(current_scene_index - 1, scene_list.size())
+			load_content_scene(scene_list[current_scene_index]["path"])
+
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_RIGHT:
+		if scene_list.size() > 0:
+			current_scene_index = posmod(current_scene_index + 1, scene_list.size())
+			load_content_scene(scene_list[current_scene_index]["path"])
 
 	if welcome_overlay and event is InputEventMouseButton and event.pressed:
 		dismiss_welcome_screen()
@@ -610,3 +647,7 @@ func _on_interaction_received(id: int, pos: Vector2, state: String):
 	if id != 99 and state == "press": # Only log non-simulated real events
 		log_message("Interaction Start: ID " + str(id))
 		LTLog.event("touch", {"id": id, "x": snapped(pos.x, 0.001), "y": snapped(pos.y, 0.001)})
+
+func _on_hand_skeleton_received(hands: Array) -> void:
+	if hand_skeleton_overlay:
+		hand_skeleton_overlay.update_hands(hands)

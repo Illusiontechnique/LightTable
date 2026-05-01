@@ -133,6 +133,19 @@ class LightTableCV:
         for d in detections:
             self.send_interaction(d["id"], d["x"], d["y"])
 
+        # 6. Send hand skeleton landmarks (HandTracker only)
+        if isinstance(self.tracker, HandTracker):
+            res = self.tracker._last_results
+            if res and res.multi_hand_landmarks:
+                hands_out = []
+                for lm in res.multi_hand_landmarks:
+                    pts = [{"x": round(pt.x, 4), "y": round(pt.y, 4)}
+                           for pt in lm.landmark]
+                    hands_out.append(pts)
+                self.bridge.send({"type": "hand_skeleton", "hands": hands_out})
+            else:
+                self.bridge.send({"type": "hand_skeleton", "hands": []})
+
         return display
 
     # ------------------------------------------------------------------
