@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from collections import deque
 from .base_tracker import BaseTracker
 
 
@@ -18,8 +19,9 @@ class BlobTracker(BaseTracker):
         self._circularity  = 20    # trackbar 0-100 → 0.0-1.0
         self._threshold    = 100   # min intensity threshold for blob detection
         self._invert       = 0
-        self._use_diff     = 0     # 1 = diff against previous frame before detecting
-        self._prev_gray    = None
+        self._use_diff     = 0     # 1 = diff against N previous frames before detecting
+        self._diff_frames  = 1     # how many frames back to diff against (1-8)
+        self._frame_buf: deque = deque()  # ring buffer of previous grays
         self._last_kp      = []
         self._init_detector()
 
@@ -30,7 +32,7 @@ class BlobTracker(BaseTracker):
         p.minArea             = float(max(1, self._min_area))
         p.maxArea             = float(max(self._min_area + 1, self._max_area))
         p.filterByCircularity = True
-        p.minCircularity      = self._circularity / 100.0
+        p.minCircularity      = max(0.01, self._circularity / 100.0)
         p.filterByConvexity   = False
         p.filterByInertia     = False
         p.minThreshold        = float(self._threshold)
@@ -42,15 +44,26 @@ class BlobTracker(BaseTracker):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         if self._use_diff:
-            if self._prev_gray is not None and self._prev_gray.shape == gray.shape:
-                gray = cv2.absdiff(gray, self._prev_gray)
-            else:
-                # First frame in diff mode — no previous yet; produce empty detection
-                self._prev_gray = gray.copy()
+            # Always push the current frame into the ring buffer
+            self._frame_buf.append(gray.copy())
+            # Keep buffer at most diff_frames + 1 deep
+            buf_limit = self._diff_frames + 1
+            while len(self._frame_buf) > buf_limit:
+                self._frame_buf.popleft()
+
+            if len(self._frame_buf) < buf_limit:
+                # Not enough history yet
                 return []
-            self._prev_gray = gray.copy()
+
+            # Diff current frame against the oldest in the buffer
+            reference = self._frame_buf[0]
+            if reference.shape == gray.shape:
+                gray = cv2.absdiff(gray, reference)
+            else:
+                self._frame_buf.clear()
+                return []
         else:
-            self._prev_gray = None  # reset when diff mode is turned off
+            self._frame_buf.clear()  # reset when diff mode is off
 
         if self._invert:
             gray = cv2.bitwise_not(gray)
@@ -69,12 +82,13 @@ class BlobTracker(BaseTracker):
     # ------------------------------------------------------------------
     def get_trackbar_settings(self):
         return [
-            {"name": "Min Area",    "max": 5000,  "default": 200},
-            {"name": "Max Area",    "max": 50000, "default": 20000},
-            {"name": "Circularity", "max": 100,   "default": 20},
-            {"name": "Threshold",   "max": 255,   "default": 100},
-            {"name": "Invert",      "max": 1,     "default": 0},
-            {"name": "Frame Diff",  "max": 1,     "default": 0},
+            {"name": "Min Area",     "max": 5000,  "default": 200},
+            {"name": "Max Area",     "max": 50000, "default": 20000},
+            {"name": "Circularity",  "max": 100,   "default": 20},
+            {"name": "Threshold",    "max": 255,   "default": 100},
+            {"name": "Invert",       "max": 1,     "default": 0},
+            {"name": "Frame Diff",   "max": 1,     "default": 0},
+            {"name": "Diff Frames",  "max": 8,     "default": 1},
         ]
 
     def on_trackbar(self, name, value):
@@ -83,9 +97,10 @@ class BlobTracker(BaseTracker):
         elif name == "Circularity": self._circularity = value;            self._init_detector()
         elif name == "Threshold":   self._threshold   = value;            self._init_detector()
         elif name == "Invert":      self._invert      = value
-        elif name == "Frame Diff":  self._use_diff    = value; self._prev_gray = None
+        elif name == "Frame Diff":  self._use_diff    = value; self._frame_buf.clear()
+        elif name == "Diff Frames": self._diff_frames = max(1, value); self._frame_buf.clear()
 
     def reset(self):
         self._last_kp  = []
-        self._prev_gray = None
+        self._frame_buf.clear()
         self._init_detector()

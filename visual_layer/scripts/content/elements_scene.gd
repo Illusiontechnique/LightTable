@@ -6,13 +6,19 @@ extends Node2D
 #  Audio intensity increases spawn rate and particle energy.
 # ─────────────────────────────────────────────────────────────────────────────
 
-const MAX_PARTICLES := 500
+var MAX_PARTICLES: int = 500
 
 var vp_size     : Vector2
 var audio_level : float = 0.0
 var _audio_sm   : float = 0.0
 var _particles  : Array = []
 var _zones      : Array = []   # [{name, rect, col}]
+
+func set_quality_level(level: int) -> void:
+	match level:
+		0: MAX_PARTICLES = 200
+		1: MAX_PARTICLES = 500
+		2: MAX_PARTICLES = 1000
 
 
 func _ready() -> void:

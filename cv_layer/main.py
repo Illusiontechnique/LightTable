@@ -38,6 +38,7 @@ class LightTableCV:
         self.tracker       = TRACKER_CLASSES[0]()
         self.ui.rebuild_for_tracker(self.tracker)
         self._last_detection_count = 0
+        self._last_skeleton_send   = 0.0   # throttle: max 20 fps
 
         # Phone web remote
         self._ctrl_state = ControlState()
@@ -81,6 +82,11 @@ class LightTableCV:
     def _adjust_frame(self, frame, s: dict):
         if s["Flip H"]:
             frame = cv2.flip(frame, 1)
+        # Downscale to selected processing resolution (actual reduction, not crop)
+        target_w, target_h = self._current_res
+        h, w = frame.shape[:2]
+        if (w, h) != (target_w, target_h):
+            frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
         alpha = s["Contrast"]   / 50.0   # 0-2, neutral at 1.0
         beta  = s["Brightness"] - 50     # -50..+50 offset
         return cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
@@ -133,18 +139,21 @@ class LightTableCV:
         for d in detections:
             self.send_interaction(d["id"], d["x"], d["y"])
 
-        # 6. Send hand skeleton landmarks (HandTracker only)
+        # 6. Send hand skeleton landmarks (HandTracker only, throttled to ~20 fps)
         if isinstance(self.tracker, HandTracker):
-            res = self.tracker._last_results
-            if res and res.multi_hand_landmarks:
-                hands_out = []
-                for lm in res.multi_hand_landmarks:
-                    pts = [{"x": round(pt.x, 4), "y": round(pt.y, 4)}
-                           for pt in lm.landmark]
-                    hands_out.append(pts)
-                self.bridge.send({"type": "hand_skeleton", "hands": hands_out})
-            else:
-                self.bridge.send({"type": "hand_skeleton", "hands": []})
+            now = time.time()
+            if now - self._last_skeleton_send >= 0.05:
+                self._last_skeleton_send = now
+                res = self.tracker._last_results
+                if res and res.multi_hand_landmarks:
+                    hands_out = []
+                    for lm in res.multi_hand_landmarks:
+                        pts = [{"x": round(pt.x, 4), "y": round(pt.y, 4)}
+                               for pt in lm.landmark]
+                        hands_out.append(pts)
+                    self.bridge.send({"type": "hand_skeleton", "hands": hands_out})
+                else:
+                    self.bridge.send({"type": "hand_skeleton", "hands": []})
 
         return display
 
@@ -239,10 +248,11 @@ class LightTableCV:
                     cap = self._open_cap(prev)
 
             # ---- Resolution change ----
+            # We resize in software after capture instead of asking the camera
+            # driver to change modes (MSMF on Windows often ignores CAP_PROP
+            # requests and just crops the ROI instead of downscaling).
             new_res = settings["Resolution"]
             if new_res != self._current_res:
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH,  new_res[0])
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, new_res[1])
                 self._current_res = new_res
 
             # ---- Remote tracker change (phone web remote) ----

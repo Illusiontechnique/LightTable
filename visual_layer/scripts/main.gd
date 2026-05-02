@@ -17,6 +17,12 @@ var simulation_mode = true
 var scene_list: Array = []      # [{name, path}]
 var current_scene_index: int = -1
 var hand_skeleton_overlay: Node2D = null
+var cursor_draw_layer: Node2D = null
+var world_env: WorldEnvironment = null
+var quality_hud_label: Label = null
+var fps_hud_label: Label = null
+var _fps_update_timer: float = 0.0
+var cursor_radius: float = 65.0
 var audio_input_floor := 0.01
 var audio_input_ceiling := 0.18
 var audio_raw_level := 0.0
@@ -40,6 +46,7 @@ func _ready():
 		log_message("Error connecting signal!")
 	receiver.remote_command.connect(_on_remote_command)
 	receiver.hand_skeleton_received.connect(_on_hand_skeleton_received)
+	LTQuality.quality_changed.connect(_on_quality_changed)
 
 	# Hand skeleton overlay (drawn above content, below UI)
 	hand_skeleton_overlay = Node2D.new()
@@ -57,7 +64,10 @@ func _ready():
 	apply_cinematic_ui()
 	set_console_visible(true)
 	show_welcome_screen()
-	
+	_setup_cursor_draw_layer()
+	_setup_world_environment()
+	_setup_quality_hud()
+
 	# Dev Dashboard toggle
 	dev_dashboard.visible = true # Start with dashboard for dev
 	dev_dashboard.modulate = Color(1, 1, 1, 0.82)
@@ -70,6 +80,19 @@ func _process(delta):
 		active_scene.call("set_audio_level", audio_level)
 	if welcome_overlay and is_instance_valid(welcome_overlay) and welcome_timer > 2.75:
 		dismiss_welcome_screen()
+	# FPS counter — update ~4x/sec to stay readable
+	_fps_update_timer += delta
+	if _fps_update_timer >= 0.25:
+		_fps_update_timer = 0.0
+		var fps := Engine.get_frames_per_second()
+		if fps_hud_label:
+			fps_hud_label.text = str(fps) + " fps"
+			if fps >= 55:
+				fps_hud_label.modulate = Color(0.40, 1.00, 0.55)
+			elif fps >= 30:
+				fps_hud_label.modulate = Color(1.00, 0.85, 0.30)
+			else:
+				fps_hud_label.modulate = Color(1.00, 0.35, 0.30)
 
 func apply_cinematic_ui():
 	var panel_style = StyleBoxFlat.new()
@@ -295,7 +318,7 @@ func show_welcome_screen():
 	help.bbcode_enabled = true
 	help.fit_content = true
 	help.scroll_active = false
-	help.text = "[center][color=white]TAB[/color] toggles the dashboard\n[color=white]← →[/color] cycle scenes   [color=white]T[/color] toggle pointers   [color=white]H[/color] hand skeleton\n[color=white]ESC[/color] exits the app\n[color=white]Click[/color] or wait to enter[/center]"
+	help.text = "[center][color=white]TAB[/color] dashboard   [color=white]← →[/color] scenes   [color=white]T[/color] pointers   [color=white]H[/color] skeleton\n[color=white]↑ ↓[/color] quality tier   [color=white]ESC[/color] quit   [color=white]Click[/color] or wait to enter[/center]"
 	content.add_child(help)
 
 	# ── Remote access info ────────────────────────────────────────────
@@ -453,8 +476,65 @@ func setup_scene_buttons():
 	var clear_btn = Button.new()
 	clear_btn.text = "Toggle Pointers  [T]"
 	clear_btn.custom_minimum_size = Vector2(0, 34)
-	clear_btn.pressed.connect(func(): interaction_container.visible = !interaction_container.visible)
+	clear_btn.pressed.connect(func():
+		if cursor_draw_layer:
+			cursor_draw_layer.show_cursors = !cursor_draw_layer.show_cursors)
 	hardware_section.add_child(clear_btn)
+
+	var cursor_section = create_dashboard_section(btn_container, "CURSORS", Color(0.45, 1.0, 0.88, 0.75))
+
+	var radius_lbl := Label.new()
+	radius_lbl.text = "Collision Radius: " + str(int(cursor_radius))
+	radius_lbl.modulate = Color(0.85, 0.98, 1.0)
+	cursor_section.add_child(radius_lbl)
+
+	var radius_slider := HSlider.new()
+	radius_slider.min_value = 12.0
+	radius_slider.max_value = 220.0
+	radius_slider.step = 1.0
+	radius_slider.value = cursor_radius
+	radius_slider.custom_minimum_size = Vector2(0, 20)
+	radius_slider.value_changed.connect(func(v: float):
+		cursor_radius = v
+		radius_lbl.text = "Collision Radius: " + str(int(v))
+		if cursor_draw_layer:
+			cursor_draw_layer.radius = v)
+	cursor_section.add_child(radius_slider)
+
+	var quality_section = create_dashboard_section(btn_container, "QUALITY", Color(0.88, 0.65, 1.0, 0.75))
+
+	var qual_lbl := Label.new()
+	qual_lbl.text = LTQuality.level_name()
+	qual_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	qual_lbl.modulate = LTQuality.level_color()
+	quality_section.add_child(qual_lbl)
+	LTQuality.quality_changed.connect(func(l: int):
+		qual_lbl.text = LTQuality.level_name()
+		qual_lbl.modulate = LTQuality.level_color())
+
+	var qual_btns := HBoxContainer.new()
+	qual_btns.add_theme_constant_override("separation", 6)
+	quality_section.add_child(qual_btns)
+
+	var q_down := Button.new()
+	q_down.text = "▼ Lower"
+	q_down.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	q_down.custom_minimum_size = Vector2(0, 30)
+	q_down.pressed.connect(LTQuality.step_down)
+	qual_btns.add_child(q_down)
+
+	var q_up := Button.new()
+	q_up.text = "▲ Higher"
+	q_up.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	q_up.custom_minimum_size = Vector2(0, 30)
+	q_up.pressed.connect(LTQuality.step_up)
+	qual_btns.add_child(q_up)
+
+	var qual_hint := Label.new()
+	qual_hint.text = "↑ / ↓ keys cycle quality"
+	qual_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	qual_hint.modulate = Color(0.82, 0.86, 1.0, 0.75)
+	quality_section.add_child(qual_hint)
 
 	var scene_section = create_dashboard_section(btn_container, "SCENES", Color(1.0, 0.88, 0.55, 0.75))
 	
@@ -498,6 +578,10 @@ func load_content_scene(script_path: String):
 	active_scene = new_node
 	background.visible = false
 
+	# Notify new scene of current quality level
+	if active_scene.has_method("set_quality_level"):
+		active_scene.call("set_quality_level", LTQuality.level)
+
 	# Track current index for arrow-key cycling
 	current_scene_index = -1
 	for i in scene_list.size():
@@ -537,7 +621,13 @@ func _input(event):
 		toggle_console_visibility()
 
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_T:
-		interaction_container.visible = !interaction_container.visible
+		if cursor_draw_layer:
+			cursor_draw_layer.show_cursors = !cursor_draw_layer.show_cursors
+
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_UP:
+		LTQuality.step_up()
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_DOWN:
+		LTQuality.step_down()
 
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
 		if hand_skeleton_overlay:
@@ -592,6 +682,8 @@ func refresh_console_toggle_label():
 func _on_clear_interactions_pressed():
 	for c in interaction_container.get_children():
 		c.queue_free()
+	if cursor_draw_layer:
+		cursor_draw_layer.clear_all()
 
 # ─── Phone web remote commands ────────────────────────────────────────────────
 func _on_remote_command(cmd: Dictionary) -> void:
@@ -621,17 +713,21 @@ func _on_interaction_received(id: int, pos: Vector2, state: String):
 	# Map normalized 0-1 to screen size
 	var screen_pos = pos * get_viewport_rect().size
 	
-	# Update main visual indicator
+	# Position tracker node (invisible; scenes query this for touch location)
 	var indicator = interaction_container.get_node_or_null(str(id))
 	if not indicator:
 		indicator = ColorRect.new()
 		indicator.name = str(id)
 		indicator.size = Vector2(40, 40)
 		indicator.pivot_offset = Vector2(20, 20)
-		indicator.color = Color(0, 1, 1, 0.5)
+		indicator.color = Color(0, 0, 0, 0)  # invisible — cursor_draw_layer handles visuals
 		interaction_container.add_child(indicator)
-	
+
 	indicator.position = screen_pos - indicator.pivot_offset
+
+	# Glowing cursor + collision radius ring
+	if cursor_draw_layer:
+		cursor_draw_layer.update_cursor(id, screen_pos)
 	
 	# Update Dev Dashboard Point Preview
 	var dev_point = hand_points_container.get_node_or_null(str(id))
@@ -651,3 +747,117 @@ func _on_interaction_received(id: int, pos: Vector2, state: String):
 func _on_hand_skeleton_received(hands: Array) -> void:
 	if hand_skeleton_overlay:
 		hand_skeleton_overlay.update_hands(hands)
+
+
+# ─── Cursor draw layer ────────────────────────────────────────────────────────
+
+func _setup_cursor_draw_layer() -> void:
+	cursor_draw_layer = Node2D.new()
+	cursor_draw_layer.set_script(load("res://scripts/cursor_draw_layer.gd"))
+	cursor_draw_layer.name = "CursorDrawLayer"
+	cursor_draw_layer.radius = cursor_radius
+	add_child(cursor_draw_layer)
+	move_child(cursor_draw_layer, get_child_count() - 2)  # just below $UI
+
+
+# ─── World Environment / post-process glow ────────────────────────────────────
+
+func _setup_world_environment() -> void:
+	var env := Environment.new()
+	env.background_mode  = Environment.BG_COLOR
+	env.background_color = Color(0.0, 0.0, 0.0)
+	env.glow_enabled     = true
+	env.glow_normalized  = false
+	env.glow_intensity   = 1.0
+	env.glow_strength    = 1.2
+	env.glow_bloom       = 0.12
+	env.glow_blend_mode  = Environment.GLOW_BLEND_MODE_ADDITIVE
+	env.glow_hdr_threshold = 0.65
+	env.glow_hdr_scale     = 1.5
+	env.set_glow_level(0, true)
+	env.set_glow_level(1, true)
+	env.set_glow_level(2, true)
+
+	world_env = WorldEnvironment.new()
+	world_env.environment = env
+	add_child(world_env)
+
+
+# ─── Quality HUD badge ────────────────────────────────────────────────────────
+
+func _setup_quality_hud() -> void:
+	var hud_layer := CanvasLayer.new()
+	hud_layer.layer = 9
+	hud_layer.name  = "QualityHUD"
+	add_child(hud_layer)
+
+	var hud_root := Control.new()
+	hud_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	hud_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud_layer.add_child(hud_root)
+
+	quality_hud_label = Label.new()
+	quality_hud_label.anchor_left   = 1.0
+	quality_hud_label.anchor_top    = 1.0
+	quality_hud_label.anchor_right  = 1.0
+	quality_hud_label.anchor_bottom = 1.0
+	quality_hud_label.offset_left   = -220
+	quality_hud_label.offset_top    = -40
+	quality_hud_label.offset_right  = -12
+	quality_hud_label.offset_bottom = -10
+	quality_hud_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	quality_hud_label.add_theme_font_size_override("font_size", 13)
+	quality_hud_label.text     = "Q: " + LTQuality.level_name()
+	quality_hud_label.modulate = LTQuality.level_color()
+	hud_root.add_child(quality_hud_label)
+
+	fps_hud_label = Label.new()
+	fps_hud_label.anchor_left   = 1.0
+	fps_hud_label.anchor_top    = 1.0
+	fps_hud_label.anchor_right  = 1.0
+	fps_hud_label.anchor_bottom = 1.0
+	fps_hud_label.offset_left   = -220
+	fps_hud_label.offset_top    = -62
+	fps_hud_label.offset_right  = -12
+	fps_hud_label.offset_bottom = -42
+	fps_hud_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	fps_hud_label.add_theme_font_size_override("font_size", 13)
+	fps_hud_label.text     = "-- fps"
+	fps_hud_label.modulate = Color(0.70, 0.85, 1.0, 0.80)
+	hud_root.add_child(fps_hud_label)
+
+
+# ─── Quality change handler ───────────────────────────────────────────────────
+
+func _on_quality_changed(level: int) -> void:
+	if world_env:
+		var env := world_env.environment
+		match level:
+			0:
+				env.glow_enabled = false
+			1:
+				env.glow_enabled   = true
+				env.glow_intensity = 0.85
+				env.glow_bloom     = 0.10
+				env.set_glow_level(0, true)
+				env.set_glow_level(1, true)
+				env.set_glow_level(2, false)
+				env.set_glow_level(3, false)
+			2:
+				env.glow_enabled   = true
+				env.glow_intensity = 1.80
+				env.glow_bloom     = 0.28
+				env.set_glow_level(0, true)
+				env.set_glow_level(1, true)
+				env.set_glow_level(2, true)
+				env.set_glow_level(3, true)
+
+	if quality_hud_label:
+		quality_hud_label.text     = "Q: " + LTQuality.level_name()
+		quality_hud_label.modulate = LTQuality.level_color()
+
+	# Notify active scene
+	if active_scene and active_scene.has_method("set_quality_level"):
+		active_scene.call("set_quality_level", level)
+
+	log_message("Quality: " + LTQuality.level_name())
