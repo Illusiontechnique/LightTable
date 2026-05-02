@@ -21,13 +21,14 @@ const NOTE_FREQ := [
 ]
 const NOTE_NAMES := ["C", "D", "E", "F", "G", "A", "B", "C"]
 
-# [freq_mult, amp, decay_rate]  -- Soft warm piano (Talk Back style)
+# [freq_mult, amp, decay_rate]  -- Rich warm professional piano
 const PARTIALS := [
-	[1.0,  0.75, 1.20],
-	[2.0,  0.35, 2.50],
-	[3.0,  0.15, 4.50],
-	[4.0,  0.08, 8.00],
-	[6.0,  0.05, 12.0],
+	[1.0,  0.80, 1.40],
+	[2.0,  0.42, 2.80],
+	[3.0,  0.18, 4.40],
+	[4.0,  0.10, 7.80],
+	[5.0,  0.06, 11.0],
+	[6.0,  0.03, 14.5],
 ]
 
 const NUM_KEYS := 8
@@ -347,28 +348,28 @@ func _update_audio(_delta: float) -> void:
 
 		var frames : int = mini(playback.get_frames_available(), 512)
 		for _f in range(frames):
-			var sample : float = 0.0
-			var freq   : float = v["freq"]
+			var sample_f : float = 0.0
+			var freq_f   : float = v["freq"]
 
 			for j in range(PARTIALS.size()):
 				var p_cfg  : Array = PARTIALS[j]
-				var p_amp  : float = float(p_cfg[1])
-				var p_dec  : float = float(p_cfg[2])
-				var ps     : Array = v["partial"][j]
-				if ps[1] < 0.0001:
+				var p_amp_f  : float = float(p_cfg[1])
+				var p_dec_f  : float = float(p_cfg[2])
+				var ps_v     : Array = v["partial"][j]
+				if ps_v[1] < 0.0001:
 					continue
 
-				sample += sin(ps[0]) * ps[1]
-				ps[0] += TAU * freq * float(p_cfg[0]) / SAMPLE_RATE
-				if ps[0] > TAU:
-					ps[0] -= TAU
+				sample_f += sin(ps_v[0]) * ps_v[1]
+				ps_v[0] += TAU * freq_f * float(p_cfg[0]) / SAMPLE_RATE
+				if ps_v[0] > TAU:
+					ps_v[0] -= TAU
 
 				if v["held"]:
-					ps[1] = max(0.0, ps[1] - (p_amp * p_dec * 0.45) / SAMPLE_RATE)
+					ps_v[1] = max(0.0, ps_v[1] - (p_amp_f * p_dec_f * 0.45) / SAMPLE_RATE)
 				else:
-					ps[1] = max(0.0, ps[1] - (p_amp * p_dec * 4.5) / SAMPLE_RATE)
+					ps_v[1] = max(0.0, ps_v[1] - (p_amp_f * p_dec_f * 4.5) / SAMPLE_RATE)
 
-			sample = clamp(sample * 0.32, -1.0, 1.0)
-			playback.push_frame(Vector2(sample, sample))
+			sample_f = clamp(sample_f * 0.35, -1.0, 1.0)
+			playback.push_frame(Vector2(sample_f, sample_f))
 
 		_voices[i] = v

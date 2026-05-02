@@ -46,6 +46,7 @@ func _ready():
 		log_message("Error connecting signal!")
 	receiver.remote_command.connect(_on_remote_command)
 	receiver.hand_skeleton_received.connect(_on_hand_skeleton_received)
+	receiver.track_mode_changed.connect(_on_track_mode_changed)
 	LTQuality.quality_changed.connect(_on_quality_changed)
 
 	# Hand skeleton overlay (drawn above content, below UI)
@@ -737,7 +738,7 @@ func _on_remote_command(cmd: Dictionary) -> void:
 			_on_clear_interactions_pressed()
 			log_message("Remote: cursors cleared")
 
-func _on_interaction_received(id: int, pos: Vector2, state: String):
+func _on_interaction_received(id: int, pos: Vector2, state: String, metadata: Dictionary = {}):
 	# Map normalized 0-1 to screen size
 	var screen_pos = pos * get_viewport_rect().size
 	
@@ -755,7 +756,7 @@ func _on_interaction_received(id: int, pos: Vector2, state: String):
 
 	# Glowing cursor + collision radius ring
 	if cursor_draw_layer:
-		cursor_draw_layer.update_cursor(id, screen_pos)
+		cursor_draw_layer.update_cursor(id, screen_pos, metadata)
 	
 	# Update Dev Dashboard Point Preview
 	var dev_point = hand_points_container.get_node_or_null(str(id))
@@ -771,6 +772,27 @@ func _on_interaction_received(id: int, pos: Vector2, state: String):
 	if id != 99 and state == "press": # Only log non-simulated real events
 		log_message("Interaction Start: ID " + str(id))
 		LTLog.event("touch", {"id": id, "x": snapped(pos.x, 0.001), "y": snapped(pos.y, 0.001)})
+
+func _on_track_mode_changed(mode: String):
+	log_message("Tracking Mode: " + mode)
+	_show_mode_toast(mode)
+
+func _show_mode_toast(text: String):
+	var toast = Label.new()
+	toast.text = "MODE: " + text.to_upper()
+	toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	toast.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	toast.add_theme_font_size_override("font_size", 42)
+	toast.modulate = Color(0.4, 0.8, 1.0, 1.0)
+	toast.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	$UI.add_child(toast)
+	
+	var tw = create_tween()
+	tw.tween_property(toast, "scale", Vector2(1.2, 1.2), 0.1)
+	tw.parallel().tween_property(toast, "modulate:a", 1.0, 0.1)
+	tw.tween_interval(1.0)
+	tw.tween_property(toast, "modulate:a", 0.0, 0.5)
+	tw.tween_callback(toast.queue_free)
 
 func _on_hand_skeleton_received(hands: Array) -> void:
 	if hand_skeleton_overlay:

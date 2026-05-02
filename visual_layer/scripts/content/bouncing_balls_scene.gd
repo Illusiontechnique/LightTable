@@ -183,11 +183,11 @@ func _process(delta: float) -> void:
 		
 		# Cursor kick
 		for tp in touch_positions:
-			var diff := pos - tp
-			var dist := diff.length()
-			if dist < KICK_RADIUS and dist > 1.0:
-				var strength := (1.0 - dist / KICK_RADIUS) * KICK_FORCE
-				vel += diff.normalized() * strength * delta
+			var diff_v : Vector2 = pos - tp
+			var dist_f : float   = diff_v.length()
+			if dist_f < KICK_RADIUS and dist_f > 1.0:
+				var strength_f : float = (1.0 - dist_f / KICK_RADIUS) * KICK_FORCE
+				vel += diff_v.normalized() * strength_f * delta
 
 		pos += vel * delta
 
@@ -228,22 +228,22 @@ func _process(delta: float) -> void:
 			var bj = _balls[j]
 			if bj["scored"]: continue
 			
-			var diff := bj["pos"] - bi["pos"]
-			var dist := diff.length()
-			var min_d := bi["r"] + bj["r"]
-			if dist < min_d and dist > 0.1:
-				var n := diff / dist
-				var pen := (min_d - dist) * 0.5
-				bi["pos"] -= n * pen
-				bj["pos"] += n * pen
+			var diff_v : Vector2 = bj["pos"] - bi["pos"]
+			var dist_f : float   = diff_v.length()
+			var min_d_f : float   = bi["r"] + bj["r"]
+			if dist_f < min_d_f and dist_f > 0.1:
+				var n_v : Vector2 = diff_v / dist_f
+				var pen_f : float   = (min_d_f - dist_f) * 0.5
+				bi["pos"] -= n_v * pen_f
+				bj["pos"] += n_v * pen_f
 				
-				var v_rel := bj["vel"] - bi["vel"]
-				var v_sep := v_rel.dot(n)
-				if v_sep < 0:
-					var imp := -1.8 * v_sep * 0.5
-					bi["vel"] -= n * imp
-					bj["vel"] += n * imp
-					_spawn_bang(bi["pos"] + n * bi["r"], bi["col"])
+				var v_rel_v : Vector2 = bj["vel"] - bi["vel"]
+				var v_sep_f : float   = v_rel_v.dot(n_v)
+				if v_sep_f < 0:
+					var imp_f : float   = -1.8 * v_sep_f * 0.5
+					bi["vel"] -= n_v * imp_f
+					bj["vel"] += n_v * imp_f
+					_spawn_bang(bi["pos"] + n_v * bi["r"], bi["col"])
 
 	queue_redraw()
 

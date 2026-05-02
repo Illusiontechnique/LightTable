@@ -47,7 +47,7 @@ class LightTableCV:
     # ------------------------------------------------------------------
     # OSC output
     # ------------------------------------------------------------------
-    def send_interaction(self, id, x, y, state="move"):
+    def send_interaction(self, id, x, y, state="move", pointers=True):
         cal_x, cal_y = self.calibration.apply(x, y)
         if self.calibration.matrix is not None:
             # Calibration warp maps to 1920×1080 space
@@ -59,11 +59,13 @@ class LightTableCV:
             norm_x = float(np.clip(cal_x / res_w, 0.0, 1.0))
             norm_y = float(np.clip(cal_y / res_h, 0.0, 1.0))
         self.bridge.send({
-            "type":  "interaction",
-            "id":    id,
-            "x":     norm_x,
-            "y":     norm_y,
-            "state": state,
+            "type":      "interaction",
+            "id":        id,
+            "x":         norm_x,
+            "y":         norm_y,
+            "state":     state,
+            "pointers":  pointers,
+            "tracker":   self.tracker.name
         })
 
     # ------------------------------------------------------------------
@@ -144,7 +146,9 @@ class LightTableCV:
 
         # 5. Send interactions over OSC
         for d in detections:
-            self.send_interaction(d["id"], d["x"], d["y"])
+            # Add pointer visibility flag to each interaction for the visuals
+            d["pointers"] = settings.get("Pointers", True)
+            self.send_interaction(d["id"], d["x"], d["y"], pointers=d["pointers"])
 
         # 6. Send hand skeleton landmarks (HandTracker only, throttled to ~20 fps)
         if isinstance(self.tracker, HandTracker):
@@ -249,8 +253,19 @@ class LightTableCV:
                 self._tracker_idx = new_tidx
                 self.tracker = TRACKER_CLASSES[new_tidx]()
                 self.ui.rebuild_for_tracker(self.tracker)
+                self.bridge.send({
+                    "type": "track_mode_change",
+                    "mode": self.tracker.name
+                })
                 self.kalman.clear()
                 self.ema.clear()
+
+            # ---- Keyboard shortcuts (1-6 for trackers) ----
+            for k in self.ui._pending_keys:
+                if k in "123456":
+                    new_idx = int(k) - 1
+                    self.ui._tracker_var.set(TRACKER_NAMES[new_idx])
+            self.ui._pending_keys.clear()
 
             # ---- Camera switch ----
             new_cidx = settings["Camera Idx"]

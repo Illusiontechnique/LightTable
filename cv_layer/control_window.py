@@ -28,6 +28,8 @@ Pillow is absent (preview disabled, everything else still works).
 
 import tkinter as tk
 import cv2
+import json
+from pathlib import Path
 
 try:
     from PIL import Image, ImageTk
@@ -40,6 +42,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 TRACKER_NAMES = ["Hands", "Blob", "Motion", "Color", "Edge", "Object"]
 SMOOTH_LABELS = ["None", "EMA", "Kalman"]
+
+_SETTINGS_PATH = Path(__file__).parent.parent / "last_settings.json"
 
 # (display_label, cap_width, cap_height)
 RESOLUTIONS = [
@@ -94,17 +98,38 @@ class ControlWindow:
         self._preview_scale  = 1.0         # last scale used → click coord mapping
         self._pending_keys: list = []
 
+        # Load persisted settings
+        defaults = {
+            "camera_idx": 0,
+            "tracker_idx": 0,
+            "smoothing_mode": 1,
+            "ema_alpha": 35,
+            "resolution": _DEFAULT_RES,
+            "brightness": 50,
+            "contrast": 50,
+            "flip_h": False,
+            "show_mask": False,
+            "target_fps": 30,
+            "pointers_visible": True
+        }
+        if _SETTINGS_PATH.exists():
+            try:
+                with open(_SETTINGS_PATH) as f:
+                    defaults.update(json.load(f))
+            except: pass
+
         # ── Global Tk variables ─────────────────────────────────────────────
-        self._camera_var    = tk.IntVar(value=1)
-        self._tracker_var   = tk.StringVar(value=TRACKER_NAMES[0])
-        self._smooth_var    = tk.StringVar(value=SMOOTH_LABELS[1])
-        self._ema_var       = tk.IntVar(value=35)
-        self._fliph_var     = tk.BooleanVar(value=False)
-        self._showmask_var  = tk.BooleanVar(value=False)
-        self._bright_var    = tk.IntVar(value=50)
-        self._contrast_var  = tk.IntVar(value=50)
-        self._res_var       = tk.StringVar(value=_DEFAULT_RES)
-        self._fps_var       = tk.IntVar(value=30)
+        self._camera_var    = tk.IntVar(value=defaults["camera_idx"])
+        self._tracker_var   = tk.StringVar(value=TRACKER_NAMES[defaults["tracker_idx"]])
+        self._smooth_var    = tk.StringVar(value=SMOOTH_LABELS[defaults["smoothing_mode"]])
+        self._ema_var       = tk.IntVar(value=defaults["ema_alpha"])
+        self._fliph_var     = tk.BooleanVar(value=defaults["flip_h"])
+        self._showmask_var  = tk.BooleanVar(value=defaults["show_mask"])
+        self._bright_var    = tk.IntVar(value=defaults["brightness"])
+        self._contrast_var  = tk.IntVar(value=defaults["contrast"])
+        self._res_var       = tk.StringVar(value=defaults["resolution"])
+        self._fps_var       = tk.IntVar(value=defaults["target_fps"])
+        self._pointers_var  = tk.BooleanVar(value=defaults["pointers_visible"])
 
         # Tracker-specific slider vars: {name: IntVar}
         self._tracker_vars: dict   = {}
@@ -219,7 +244,7 @@ class ControlWindow:
         self._add_slider(right, "Contrast",   self._contrast_var, 0, 100)
         toggle_row = tk.Frame(right, bg=_DARK)
         toggle_row.pack(fill="x", pady=(4, 0))
-        for text, var in (("Flip H", self._fliph_var), ("Show Mask", self._showmask_var)):
+        for text, var in (("Flip H", self._fliph_var), ("Show Mask", self._showmask_var), ("Pointers", self._pointers_var)):
             tk.Checkbutton(
                 toggle_row, text=text, variable=var,
                 bg=_DARK, fg=_TXT2, selectcolor="#333",
@@ -395,7 +420,7 @@ class ControlWindow:
         rn = self._res_var.get()
         res_entry = next((r for r in RESOLUTIONS if r[0] == rn), RESOLUTIONS[2])
 
-        return {
+        s = {
             "Camera Idx":  self._camera_var.get(),
             "Tracker":     tracker_idx,
             "Smoothing":   smooth_idx,
@@ -406,4 +431,27 @@ class ControlWindow:
             "Contrast":    self._contrast_var.get(),
             "Resolution":  (res_entry[1], res_entry[2]),
             "Target FPS":  max(1, self._fps_var.get()),
+            "Pointers":    self._pointers_var.get(),
+            "_res_label":  rn
         }
+        self._save_settings(s)
+        return s
+
+    def _save_settings(self, s: dict):
+        save_data = {
+            "camera_idx":       s["Camera Idx"],
+            "tracker_idx":      s["Tracker"],
+            "smoothing_mode":   s["Smoothing"],
+            "ema_alpha":        s["EMA Respons"],
+            "resolution":       s["_res_label"],
+            "brightness":       s["Brightness"],
+            "contrast":         s["Contrast"],
+            "flip_h":           bool(s["Flip H"]),
+            "show_mask":        bool(s["Show Mask"]),
+            "target_fps":       s["Target FPS"],
+            "pointers_visible": s["Pointers"],
+        }
+        try:
+            with open(_SETTINGS_PATH, "w") as f:
+                json.dump(save_data, f, indent=2)
+        except: pass

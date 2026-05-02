@@ -3,9 +3,10 @@ extends Node
 var peer : PacketPeerUDP
 var port: int = 7000
 
-signal interaction_received(id: int, pos: Vector2, state: String)
+signal interaction_received(id: int, pos: Vector2, state: String, metadata: Dictionary)
 signal remote_command(cmd: Dictionary)
 signal hand_skeleton_received(hands: Array)
+signal track_mode_changed(mode: String)
 
 func _ready():
 	peer = PacketPeerUDP.new()
@@ -28,9 +29,11 @@ func _parse_json_packet(packet: PackedByteArray):
 		if data.has("type"):
 			if data["type"] == "interaction":
 				var pos = Vector2(data["x"], data["y"])
-				interaction_received.emit(int(data["id"]), pos, data["state"])
+				interaction_received.emit(int(data["id"]), pos, data["state"], data)
 			elif data["type"] == "command":
 				remote_command.emit(data)
 			elif data["type"] == "hand_skeleton":
 				hand_skeleton_received.emit(data["hands"])
+			elif data["type"] == "track_mode_change":
+				track_mode_changed.emit(data["mode"])
 
