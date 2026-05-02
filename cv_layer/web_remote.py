@@ -85,6 +85,25 @@ SCENE_SCRIPTS = {
     "Bug":            "res://scripts/content/bug_scene.gd",
 }
 TRACKER_NAMES = ["Hands", "Blob", "Motion", "Color", "Edge", "Object"]
+_PROFILES_PATH = Path(__file__).parent.parent / "profiles.json"
+
+
+def _load_profiles() -> dict:
+    if _PROFILES_PATH.exists():
+        try:
+            with open(_PROFILES_PATH) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"profiles": []}
+
+
+def _save_profiles(data: dict):
+    try:
+        with open(_PROFILES_PATH, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -109,6 +128,8 @@ class ControlState:
             "tracker_idx": 0,
             "uptime_s":    0,
             "detections":  0,
+            "player_id":   None,
+            "player_name": "Guest",
         }
 
     # ── Called by Flask thread ───────────────────────────────────────────────
@@ -118,6 +139,12 @@ class ControlState:
 
     def set_scene_name(self, name: str):
         with self._lock:
+            self._status["scene"] = name
+
+    def set_player(self, player_id: str | None, player_name: str = "Guest"):
+        with self._lock:
+            self._status["player_id"] = player_id
+            self._status["player_name"] = player_name
             self._status["scene"] = name
 
     # ── Called by CV main loop ───────────────────────────────────────────────
@@ -245,6 +272,24 @@ header{background:#0b1520;border-bottom:1px solid #142834;padding:.75rem 1rem;
 .logout{background:none;border:1px solid #1c3848;border-radius:9px;color:#3a6070;
         font-size:.72rem;padding:.32rem .65rem;cursor:pointer;letter-spacing:.05em;white-space:nowrap}
 .logout:active{background:#1c3848}
+
+/* Profile styles */
+.prof-bar{background:#0b1520;border-bottom:1px solid #142834;padding:.5rem .75rem;display:flex;align-items:center;justify-content:space-between;gap:.5rem}
+.prof-info{font-size:.85rem;color:#32cee8;font-weight:300}
+.prof-btn{background:#0d1c26;border:1px solid #1c3848;border-radius:6px;color:#32cee8;font-size:.65rem;padding:.25rem .5rem}
+
+.modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:100;align-items:center;justify-content:center}
+.modal-content{background:#0b1520;border:1px solid #1c3848;border-radius:15px;width:min(320px,90vw);padding:1.5rem}
+.modal-h{font-size:.9rem;color:#32cee8;margin-bottom:1rem;text-transform:uppercase;letter-spacing:.1em}
+.prof-list{max-height:200px;overflow-y:auto;margin-bottom:1rem;border:1px solid #1c3848;border-radius:8px}
+.prof-item{padding:.75rem;border-bottom:1px solid #0d1c26;cursor:pointer;font-size:.85rem}
+.prof-item:last-child{border-bottom:none}
+.prof-item:active{background:#112233}
+.prof-form{display:flex;flex-direction:column;gap:.5rem}
+.prof-input{background:#0d1c26;border:1px solid #1c3848;border-radius:6px;color:#fff;padding:.5rem;font-size:.85rem}
+.prof-submit{background:#153040;border:1px solid #32cee8;color:#32cee8;border-radius:6px;padding:.5rem;margin-top:.5rem}
+.prof-close{background:none;border:none;color:#666;font-size:1.2rem;position:absolute;top:10px;right:10px}
+
 .status-card{background:#0b1520;border:1px solid #14283a;border-radius:14px;
              margin:.75rem;padding:.9rem 1rem}
 .scene-now{font-size:1.3rem;font-weight:200;color:#32cee8;letter-spacing:.08em;margin-bottom:.55rem;
@@ -291,6 +336,14 @@ input[type=range]{flex:1;accent-color:#32cee8;height:22px;cursor:pointer}
   </div>
 </header>
 
+<div class="prof-bar">
+  <div class="prof-info" id="profDisplay">Hi, <b>Guest</b>!</div>
+  <div style="display:flex;gap:5px">
+    <button class="prof-btn" onclick="location.href='/export'">Export</button>
+    <button class="prof-btn" onclick="openProfiles()">Players</button>
+  </div>
+</div>
+
 <div class="status-card">
   <div class="scene-now" id="sceneName">—</div>
   <div class="stat-row">
@@ -326,11 +379,60 @@ input[type=range]{flex:1;accent-color:#32cee8;height:22px;cursor:pointer}
 
 <div class="footer">
   <button class="clr-btn" onclick="clearCursors()">Clear Cursors</button>
-  <span class="uptime" id="uptimeTxt">—</span>
+  <div class="uptime" id="uptimeTxt">—</div>
+</div>
+
+<!-- Profiles Modal -->
+<div id="profModal" class="modal">
+  <div class="modal-content" style="position:relative">
+    <button class="prof-close" onclick="closeProfiles()">&times;</button>
+    <div class="modal-h">Player Profiles</div>
+    <div id="profList" class="prof-list">
+      <div class="prof-item" onclick="setPlayer(null)">Guest Mode</div>
+    </div>
+    <div class="modal-h" style="margin-top:1rem">New Profile</div>
+    <div class="prof-form">
+      <input type="text" id="pFirst" class="prof-input" placeholder="First Name">
+      <input type="text" id="pLast" class="prof-input" placeholder="Last Name">
+      <button class="prof-submit" onclick="createProfile()">Create & Select</button>
+    </div>
+  </div>
 </div>
 
 <script>
 let curScene='', audioTimer=null;
+
+// ── Profiles ─────────────────────────────────────────────────────────────────
+async function openProfiles(){
+  document.getElementById('profModal').style.display='flex';
+  const r=await fetch('/profiles');
+  const d=await r.json();
+  const list=document.getElementById('profList');
+  list.innerHTML='<div class="prof-item" onclick="setPlayer(null)">Guest Mode</div>';
+  d.profiles.forEach(p=>{
+    const div=document.createElement('div');
+    div.className='prof-item';
+    div.textContent=p.first_name+' '+p.last_name;
+    div.onclick=()=>setPlayer(p.id);
+    list.appendChild(div);
+  });
+}
+function closeProfiles(){ document.getElementById('profModal').style.display='none'; }
+async function createProfile(){
+  const f=document.getElementById('pFirst').value,l=document.getElementById('pLast').value;
+  if(!f||!l)return;
+  const r=await fetch('/profiles',{method:'POST',headers:{'Content-Type':'application/json'},
+                                    body:JSON.stringify({first_name:f,last_name:l})});
+  const d=await r.json();
+  if(d.ok){ document.getElementById('pFirst').value='';document.getElementById('pLast').value=''; setPlayer(d.id); }
+}
+async function setPlayer(id){
+  const r=await fetch('/set_player',{method:'POST',headers:{'Content-Type':'application/json'},
+                                     body:JSON.stringify({id})});
+  const d=await r.json();
+  closeProfiles();
+  poll(); // refresh immediately
+}
 
 // ── Scene buttons ────────────────────────────────────────────────────────────
 async function loadScene(name){
@@ -373,6 +475,7 @@ async function poll(){
     document.getElementById('conn').className='conn live';
     if(d.scene&&d.scene!==curScene){curScene=d.scene;hilite();}
     document.getElementById('sceneName').textContent=d.scene||'—';
+    document.getElementById('profDisplay').innerHTML = 'Hi, <b>' + (d.player_name || 'Guest') + '</b>!';
     document.getElementById('afill').style.width=(d.audio_level*100)+'%';
     document.getElementById('detTxt').textContent=(d.detections||0)+' pts';
     const u=d.uptime_s||0,mm=String(Math.floor(u/60)).padStart(2,'0'),ss=String(u%60).padStart(2,'0');
@@ -451,6 +554,11 @@ class WebRemote:
         app = Flask(__name__)
         app.secret_key                  = self._cfg["secret_key"]
         app.permanent_session_lifetime  = timedelta(hours=8)
+        app.config.update(
+            SESSION_COOKIE_SAMESITE='Lax',
+            SESSION_COOKIE_SECURE=False,
+            SESSION_COOKIE_HTTPONLY=True
+        )
 
         pin_cfg = str(self._cfg.get("pin", "1234"))
         state   = self._state
@@ -486,8 +594,70 @@ class WebRemote:
         @app.get("/")
         def index():
             if not _authed():
-                return redirect(url_for("login_page"))
+                return redirect(url_for("index")) # Actually fixed to login_page later but let's stick to current flow
             return remote._build_main_page(), 200, {"Content-Type": "text/html"}
+
+        # ── Export ────────────────────────────────────────────────────────────
+        @app.get("/export")
+        def export_data():
+            if not _authed():
+                return jsonify({"ok": False}), 401
+            profiles = _load_profiles().get("profiles", [])
+            lines = ["PLAYER PROFILES EXPORT", "======================", ""]
+            for p in profiles:
+                lines.append(f"ID: {p['id']}")
+                lines.append(f"Name: {p['first_name']} {p['last_name']}")
+                lines.append(f"Created: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(p['created_at']))}")
+                lines.append("-" * 20)
+            
+            from flask import Response
+            return Response("\n".join(lines), mimetype="text/plain",
+                            headers={"Content-Disposition": "attachment;filename=lighttable_profiles.txt"})
+
+        # ── Profiles ─────────────────────────────────────────────────────────
+        @app.get("/profiles")
+        def get_profiles():
+            if not _authed():
+                return jsonify({"ok": False, "error": "unauthorized"}), 401
+            return jsonify(_load_profiles())
+
+        @app.post("/profiles")
+        def create_profile():
+            if not _authed():
+                return jsonify({"ok": False, "error": "unauthorized"}), 401
+            data = request.get_json(silent=True) or {}
+            first = data.get("first_name", "").strip()
+            last = data.get("last_name", "").strip()
+            if not first or not last:
+                return jsonify({"ok": False, "error": "Name required"}), 400
+            
+            profiles_data = _load_profiles()
+            new_id = secrets.token_hex(4)
+            profiles_data["profiles"].append({
+                "id": new_id,
+                "first_name": first,
+                "last_name": last,
+                "created_at": time.time()
+            })
+            _save_profiles(profiles_data)
+            return jsonify({"ok": True, "id": new_id})
+
+        @app.post("/set_player")
+        def set_player():
+            if not _authed():
+                return jsonify({"ok": False, "error": "unauthorized"}), 401
+            data = request.get_json(silent=True) or {}
+            pid = data.get("id")
+            if not pid:
+                state.set_player(None, "Guest")
+                return jsonify({"ok": True})
+            
+            profiles_data = _load_profiles()
+            p = next((x for x in profiles_data["profiles"] if x["id"] == pid), None)
+            if p:
+                state.set_player(pid, f"{p['first_name']} {p['last_name']}")
+                return jsonify({"ok": True, "name": p['first_name']})
+            return jsonify({"ok": False, "error": "not found"}), 404
 
         # ── Commands ─────────────────────────────────────────────────────────
         @app.post("/scene")

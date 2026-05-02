@@ -21,13 +21,13 @@ const NOTE_FREQ := [
 ]
 const NOTE_NAMES := ["C", "D", "E", "F", "G", "A", "B", "C"]
 
-# [freq_mult, amp, decay_rate]  -- electric piano (Rhodes-style tine)
+# [freq_mult, amp, decay_rate]  -- Soft warm piano (Talk Back style)
 const PARTIALS := [
-	[1.0,  0.65, 0.60],
-	[2.0,  0.40, 2.20],
-	[3.0,  0.18, 5.00],
-	[4.0,  0.07, 9.00],
-	[7.0,  0.025, 15.0],
+	[1.0,  0.75, 1.20],
+	[2.0,  0.35, 2.50],
+	[3.0,  0.15, 4.50],
+	[4.0,  0.08, 8.00],
+	[6.0,  0.05, 12.0],
 ]
 
 const NUM_KEYS := 8
@@ -364,11 +364,11 @@ func _update_audio(_delta: float) -> void:
 					ps[0] -= TAU
 
 				if v["held"]:
-					ps[1] = max(0.0, ps[1] - (p_amp * p_dec * 0.8) / SAMPLE_RATE)
+					ps[1] = max(0.0, ps[1] - (p_amp * p_dec * 0.45) / SAMPLE_RATE)
 				else:
-					ps[1] = max(0.0, ps[1] - (p_amp * p_dec * 5.5) / SAMPLE_RATE)
+					ps[1] = max(0.0, ps[1] - (p_amp * p_dec * 4.5) / SAMPLE_RATE)
 
-			sample = clamp(sample * 0.22, -1.0, 1.0)
+			sample = clamp(sample * 0.32, -1.0, 1.0)
 			playback.push_frame(Vector2(sample, sample))
 
 		_voices[i] = v
