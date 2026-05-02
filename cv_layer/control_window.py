@@ -104,6 +104,7 @@ class ControlWindow:
         self._bright_var    = tk.IntVar(value=50)
         self._contrast_var  = tk.IntVar(value=50)
         self._res_var       = tk.StringVar(value=_DEFAULT_RES)
+        self._fps_var       = tk.IntVar(value=30)
 
         # Tracker-specific slider vars: {name: IntVar}
         self._tracker_vars: dict   = {}
@@ -195,6 +196,7 @@ class ControlWindow:
         om_res = tk.OptionMenu(right, self._res_var, *res_labels)
         self._style_menu(om_res)
         om_res.pack(fill="x", pady=(0, 6))
+        self._add_slider(right, "Target FPS", self._fps_var, 1, 60)
 
         # — Camera index ——————————————————————————————————————————————
         self._add_section_label(right, "CAMERA")
@@ -403,4 +405,5 @@ class ControlWindow:
             "Brightness":  self._bright_var.get(),
             "Contrast":    self._contrast_var.get(),
             "Resolution":  (res_entry[1], res_entry[2]),
+            "Target FPS":  max(1, self._fps_var.get()),
         }

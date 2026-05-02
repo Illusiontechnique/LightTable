@@ -71,7 +71,7 @@ func _ready():
 	# Dev Dashboard toggle
 	dev_dashboard.visible = true # Start with dashboard for dev
 	dev_dashboard.modulate = Color(1, 1, 1, 0.82)
-	log_message("System Ready. Press Load Water to begin.")
+	log_message("System Ready.")
 
 func _process(delta):
 	welcome_timer += delta
@@ -561,7 +561,7 @@ func setup_scene_buttons():
 
 	for s_name in scenes:
 		var btn = Button.new()
-		btn.text = "Load " + s_name
+		btn.text = s_name
 		btn.custom_minimum_size = Vector2(0, 34)
 		btn.pressed.connect(load_content_scene.bind(scenes[s_name]))
 		scene_section.add_child(btn)

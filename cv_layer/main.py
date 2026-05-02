@@ -49,8 +49,15 @@ class LightTableCV:
     # ------------------------------------------------------------------
     def send_interaction(self, id, x, y, state="move"):
         cal_x, cal_y = self.calibration.apply(x, y)
-        norm_x = float(np.clip(cal_x / 1920.0, 0.0, 1.0))
-        norm_y = float(np.clip(cal_y / 1080.0, 0.0, 1.0))
+        if self.calibration.matrix is not None:
+            # Calibration warp maps to 1920×1080 space
+            norm_x = float(np.clip(cal_x / 1920.0, 0.0, 1.0))
+            norm_y = float(np.clip(cal_y / 1080.0, 0.0, 1.0))
+        else:
+            # No calibration: normalize by the actual processing resolution
+            res_w, res_h = self._current_res
+            norm_x = float(np.clip(cal_x / res_w, 0.0, 1.0))
+            norm_y = float(np.clip(cal_y / res_h, 0.0, 1.0))
         self.bridge.send({
             "type":  "interaction",
             "id":    id,
@@ -218,12 +225,23 @@ class LightTableCV:
         print("  a          freeze & select object  (Object tracker only)")
         print("  x          clear tracked objects   (Object tracker only)\n")
 
+        _frame_deadline = time.time()
+
         while cap.isOpened() and self.ui.is_open():
             ok, frame = cap.read()
             if not ok:
                 break
 
             settings = self.ui.read()
+
+            # ---- FPS cap ----
+            target_fps  = settings["Target FPS"]
+            frame_dur   = 1.0 / target_fps
+            now         = time.time()
+            sleep_for   = _frame_deadline - now
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+            _frame_deadline = max(time.time(), _frame_deadline + frame_dur)
 
             # ---- Tracker switch ----
             new_tidx = settings["Tracker"]
