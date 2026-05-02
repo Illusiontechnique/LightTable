@@ -154,6 +154,19 @@ func _splatter(pos: Vector2) -> void:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Weighted 3-point average (1/4, 1/2, 1/4) applied to the ring buffer.
+# Gives smooth Bézier-like curves without adding extra points.
+func _smooth_pts(pts: Array, start: int, count: int) -> PackedVector2Array:
+	var result := PackedVector2Array()
+	var n := pts.size()
+	for j in range(count):
+		var p0 : Vector2 = pts[(start + j - 1 + n) % n]
+		var p1 : Vector2 = pts[(start + j)         % n]
+		var p2 : Vector2 = pts[(start + j + 1)     % n]
+		result.append((p0 + p1 * 2.0 + p2) * 0.25)
+	return result
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 func _process(delta: float) -> void:
 	_audio_sm  = lerp(_audio_sm, audio_level, delta * 7.0)
@@ -191,15 +204,15 @@ func _process(delta: float) -> void:
 						tr["prev_pos"] = sp
 						tr["hue"] = trail_hue
 						_trails[id] = tr
-						# Rebuild Line2D from ring buffer (oldest → newest)
-						var line : Line2D = tr["line"] as Line2D
-						var glow : Line2D = tr["glow"] as Line2D
-						line.clear_points()
-						glow.clear_points()
-						for j in range(MAX_TRAIL_PTS):
-							var idx : int = (head + 1 + j) % MAX_TRAIL_PTS
-							line.add_point(tr["pts"][idx])
-							glow.add_point(tr["pts"][idx])
+					# Rebuild smoothed Line2D from ring buffer (oldest → newest)
+					var line : Line2D = tr["line"] as Line2D
+					var glow : Line2D = tr["glow"] as Line2D
+					var spts := _smooth_pts(tr["pts"], (head + 1) % MAX_TRAIL_PTS, MAX_TRAIL_PTS)
+					line.clear_points()
+					glow.clear_points()
+					for p in spts:
+						line.add_point(p)
+						glow.add_point(p)
 						var w : float = 4.0 + clamp(tr["speed"] / 400.0, 0.0, 8.0) + _audio_sm * 7.0
 						line.width = w
 						glow.width = w * 4.5
@@ -217,13 +230,13 @@ func _process(delta: float) -> void:
 						_trails[id] = tr2
 						var line2 : Line2D = tr2["line"] as Line2D
 						var glow2 : Line2D = tr2["glow"] as Line2D
-						line2.clear_points()
-						glow2.clear_points()
-						var h : int = tr2["head"]
-						for j in range(MAX_TRAIL_PTS):
-							var idx2 : int = (h + 1 + j) % MAX_TRAIL_PTS
-							line2.add_point(tr2["pts"][idx2] + Vector2(randf_range(-2, 2), randf_range(-2, 2)))
-							glow2.add_point(tr2["pts"][idx2])
+					var h : int = tr2["head"]
+					var spts2 := _smooth_pts(tr2["pts"], (h + 1) % MAX_TRAIL_PTS, MAX_TRAIL_PTS)
+					line2.clear_points()
+					glow2.clear_points()
+					for p in spts2:
+						line2.add_point(p + Vector2(randf_range(-1.5, 1.5), randf_range(-1.5, 1.5)))
+						glow2.add_point(p)
 						line2.width = 9.0 + _audio_sm * 5.0
 						glow2.width = 14.0
 						line2.default_color = Color.from_hsv(trail_hue, 0.30, 0.95, 0.70)

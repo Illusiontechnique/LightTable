@@ -102,7 +102,7 @@ func _fill_audio() -> void:
 			if note["remaining"] <= 0:
 				continue
 			var elapsed := float(note["total"] - note["remaining"]) / SAMPLE_RATE
-			var env := exp(-elapsed * 3.2) * min(1.0, elapsed * 60.0)
+			var env: float = exp(-elapsed * 3.2) * min(1.0, elapsed * 60.0)
 			note["phase"] += TAU * note["freq"] / SAMPLE_RATE
 			if note["phase"] > TAU:
 				note["phase"] -= TAU
@@ -245,7 +245,7 @@ func _process(delta: float) -> void:
 			continue
 		_glow_t[i] += delta
 		var pulse := 1.0 + 0.10 * sin(_glow_t[i] * 3.8)
-		var base  := LIT_PALETTE[i % LIT_PALETTE.size()]
+		var base: Color = LIT_PALETTE[i % LIT_PALETTE.size()]
 		_labels[i].modulate = Color(base.r * pulse, base.g * pulse, base.b * pulse, 1.0)
 
 	if _done:
@@ -263,14 +263,14 @@ func _check_touches() -> void:
 	var current_map: Dictionary = {}
 
 	for touch in interactions.get_children():
-		var tp    := touch.global_position
+		var tp: Vector2 = touch.global_position
 		var best  := -1
 		var bdist := hit_radius
 
 		for i in _labels.size():
 			var lbl    := _labels[i] as Label
 			var center := lbl.global_position + lbl.size * 0.5
-			var d      := tp.distance_to(center)
+			var d: float = tp.distance_to(center)
 			if d < bdist:
 				bdist = d
 				best  = i
