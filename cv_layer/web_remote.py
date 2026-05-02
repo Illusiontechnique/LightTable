@@ -594,7 +594,7 @@ class WebRemote:
         @app.get("/")
         def index():
             if not _authed():
-                return redirect(url_for("index")) # Actually fixed to login_page later but let's stick to current flow
+                return redirect(url_for("login_page"))
             return remote._build_main_page(), 200, {"Content-Type": "text/html"}
 
         # ── Export ────────────────────────────────────────────────────────────
