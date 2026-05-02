@@ -589,8 +589,36 @@ func load_content_scene(script_path: String):
 			current_scene_index = i
 			break
 
+	if current_scene_index >= 0:
+		_show_scene_title(scene_list[current_scene_index]["name"])
+
 	log_message("Loaded Scene: " + script_path)
 	LTLog.event("scene_load", {"scene": script_path, "fps": Engine.get_frames_per_second()})
+
+func _show_scene_title(scene_name: String) -> void:
+	var existing := get_node_or_null("SceneTitleOverlay")
+	if existing:
+		existing.queue_free()
+	var vp := get_viewport_rect().size
+	var lbl := Label.new()
+	lbl.name = "SceneTitleOverlay"
+	lbl.text = scene_name
+	lbl.add_theme_font_size_override("font_size", 88)
+	lbl.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 1.0))
+	lbl.add_theme_color_override("font_outline_color", Color(0.0, 0.15, 0.35, 0.95))
+	lbl.add_theme_constant_override("outline_size", 5)
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
+	lbl.size     = vp
+	lbl.position = Vector2.ZERO
+	lbl.z_index  = 60
+	$UI.add_child(lbl)
+	get_tree().create_timer(2.5).timeout.connect(func():
+		if is_instance_valid(lbl):
+			var tw := create_tween()
+			tw.tween_property(lbl, "modulate:a", 0.0, 0.7)
+			tw.tween_callback(lbl.queue_free)
+	)
 
 func _on_restart_cam_pressed():
 	log_message("Restarting CV Layer...")

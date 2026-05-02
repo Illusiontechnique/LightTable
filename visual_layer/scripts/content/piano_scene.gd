@@ -17,21 +17,20 @@ const SAMPLE_RATE  := 44100.0
 const NOTE_DUR     := 2.20
 
 const NOTE_FREQ := [
-	261.63, 277.18, 293.66, 311.13, 329.63, 349.23,
-	369.99, 392.00, 415.30, 440.00, 466.16, 493.88
+	261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25
 ]
-const NOTE_NAMES := ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+const NOTE_NAMES := ["C", "D", "E", "F", "G", "A", "B", "C"]
 
-# [freq_mult, amp, decay_rate]
+# [freq_mult, amp, decay_rate]  -- electric piano (Rhodes-style tine)
 const PARTIALS := [
-	[1.0, 0.60, 1.10],
-	[2.0, 0.28, 1.55],
-	[3.0, 0.14, 2.20],
-	[4.0, 0.07, 3.80],
-	[6.0, 0.03, 6.00],
+	[1.0,  0.65, 0.60],
+	[2.0,  0.40, 2.20],
+	[3.0,  0.18, 5.00],
+	[4.0,  0.07, 9.00],
+	[7.0,  0.025, 15.0],
 ]
 
-const NUM_KEYS := 12
+const NUM_KEYS := 8
 const KEY_GAP  := 5
 const DEPTH    := 26    # 3-D extrusion depth (px)
 const SKEW     := 8     # horizontal skew of depth face (px, suggests perspective)
@@ -121,7 +120,7 @@ func _add_housing() -> void:
 	add_child(acc2)
 
 	var title := Label.new()
-	title.text = "SYNTH  Â·  CHROMATIC"
+	title.text = "ELECTRIC PIANO"
 	title.add_theme_font_size_override("font_size", 20)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	title.modulate = Color(0.45, 0.75, 1.0, 0.82)
@@ -141,8 +140,7 @@ func _build_keys() -> void:
 		_key_left.append(kx)
 
 		var hue : float = float(i) / float(NUM_KEYS)
-		var col : Color = Color.from_hsv(hue, 0.80, 0.88)
-		_key_colors.append(col)
+		_key_colors.append(Color.from_hsv(hue, 0.95, 1.0))
 		_key_states.append(false)
 
 		# â”€â”€ Depth face (3-D extrusion below key) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -153,7 +151,7 @@ func _build_keys() -> void:
 			Vector2(kx + kw + SKEW, ky + kh + DEPTH),
 			Vector2(kx + SKEW,     ky + kh + DEPTH),
 		])
-		depth_p.color = Color.from_hsv(hue, 0.70, 0.16)
+		depth_p.color = Color(0.42, 0.40, 0.38)
 		add_child(depth_p)
 		_depth_poly.append(depth_p)
 
@@ -165,7 +163,7 @@ func _build_keys() -> void:
 			Vector2(kx + kw, ky + kh),
 			Vector2(kx,      ky + kh),
 		])
-		face_p.color = Color.from_hsv(hue, 0.65, 0.20)
+		face_p.color = Color(0.92, 0.90, 0.86)
 		add_child(face_p)
 		_face_poly.append(face_p)
 
@@ -207,7 +205,7 @@ func _build_keys() -> void:
 		var led := ColorRect.new()
 		led.size     = Vector2(kw * 0.35, 7)
 		led.position = Vector2(kx + kw * 0.325, ky + 14)
-		led.color    = Color.from_hsv(hue, 0.90, 0.28)
+		led.color    = Color(0.55, 0.53, 0.50)
 		add_child(led)
 		_led_rects.append(led)
 
@@ -218,7 +216,7 @@ func _build_keys() -> void:
 		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		lbl.size     = Vector2(kw, 36)
 		lbl.position = Vector2(kx, ky + kh - 44)
-		lbl.modulate = Color(0.7, 0.8, 1.0, 0.50)
+		lbl.modulate = Color(0.25, 0.25, 0.35, 0.80)
 		add_child(lbl)
 		_name_lbls.append(lbl)
 
@@ -228,7 +226,7 @@ func _build_keys() -> void:
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 func _add_display() -> void:
 	_active_lbl = Label.new()
-	_active_lbl.text = "â€”"
+	_active_lbl.text = "-"
 	_active_lbl.add_theme_font_size_override("font_size", int(_key_top_y * 0.70))
 	_active_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_active_lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
@@ -318,15 +316,15 @@ func _process(delta: float) -> void:
 		var led  : ColorRect = _led_rects[i]  as ColorRect
 
 		if pressed:
-			fp.color  = Color.from_hsv(hue, 1.0, 1.0)
-			dp.color  = Color.from_hsv(hue, 0.82, 0.58)
-			led.color = Color.from_hsv(hue, 0.95, 1.0)
+			fp.color  = Color.from_hsv(hue, 0.90, 1.0)
+			dp.color  = Color.from_hsv(hue, 0.80, 0.65)
+			led.color = Color.from_hsv(hue, 0.85, 1.0)
 			if not was_pressed:
-				gp.color.a = 0.55
+				gp.color.a = 0.65
 		else:
-			fp.color  = Color.from_hsv(hue, 0.65, 0.20)
-			dp.color  = Color.from_hsv(hue, 0.70, 0.16)
-			led.color = Color.from_hsv(hue, 0.90, 0.28)
+			fp.color  = Color(0.92, 0.90, 0.86)
+			dp.color  = Color(0.42, 0.40, 0.38)
+			led.color = Color(0.55, 0.53, 0.50)
 
 		# Glow fade
 		if gp.color.a > 0.0:
@@ -334,7 +332,7 @@ func _process(delta: float) -> void:
 
 	# Active display fade
 	if _active_t <= 0.0:
-		_active_lbl.text    = "â€”"
+		_active_lbl.text    = "-"
 		_active_lbl.modulate = Color(0.35, 0.65, 1.0, 0.45)
 
 	_update_audio(delta)

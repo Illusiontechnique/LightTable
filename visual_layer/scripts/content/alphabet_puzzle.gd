@@ -288,7 +288,10 @@ func _check_touches() -> void:
 func _light_letter(idx: int) -> void:
 	_lit[idx]    = true
 	_glow_t[idx] = 0.0
-	_queue_note(NOTE_FREQS[idx])
+	var freq := NOTE_FREQS[idx]
+	_queue_note(freq)
+	get_tree().create_timer(0.22).timeout.connect(func(): _queue_note(freq))
+	get_tree().create_timer(0.44).timeout.connect(func(): _queue_note(freq))
 	_next_idx = idx + 1
 
 	if _next_idx >= _labels.size():

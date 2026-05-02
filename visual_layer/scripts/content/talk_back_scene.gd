@@ -129,7 +129,7 @@ func _build_nav_zones() -> void:
 	add_child(_right_bg)
 
 	_left_hint = Label.new()
-	_left_hint.text = "â—„\nâœ‹\nPrev"
+	_left_hint.text = "< Prev"
 	_left_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_left_hint.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
 	_left_hint.add_theme_font_size_override("font_size", int(zone_w * 0.42))
@@ -139,7 +139,7 @@ func _build_nav_zones() -> void:
 	add_child(_left_hint)
 
 	_right_hint = Label.new()
-	_right_hint.text = "âœ‹\nâ–º\nNext"
+	_right_hint.text = "Next >"
 	_right_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_right_hint.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
 	_right_hint.add_theme_font_size_override("font_size", int(zone_w * 0.42))
