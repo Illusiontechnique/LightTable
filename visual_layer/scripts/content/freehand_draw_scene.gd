@@ -196,51 +196,52 @@ func _process(delta: float) -> void:
 					var tr : Dictionary = _trails[id]
 					var prev : Vector2 = tr["prev_pos"]
 					var moved : float  = sp.distance_to(prev)
+					var head : int = tr["head"]
 					if moved >= MIN_DIST:
 						tr["speed"] = moved / delta
-						var head : int = tr["head"]
 						tr["pts"][head] = sp
-						tr["head"] = (head + 1) % MAX_TRAIL_PTS
+						head = (head + 1) % MAX_TRAIL_PTS
+						tr["head"] = head
 						tr["prev_pos"] = sp
 						tr["hue"] = trail_hue
 						_trails[id] = tr
 					# Rebuild smoothed Line2D from ring buffer (oldest → newest)
 					var line : Line2D = tr["line"] as Line2D
 					var glow : Line2D = tr["glow"] as Line2D
-					var spts := _smooth_pts(tr["pts"], (head + 1) % MAX_TRAIL_PTS, MAX_TRAIL_PTS)
+					var spts := _smooth_pts(tr["pts"], head % MAX_TRAIL_PTS, MAX_TRAIL_PTS)
+					var w : float = 4.0 + clamp(float(tr["speed"]) / 400.0, 0.0, 8.0) + _audio_sm * 7.0
+					line.width = w
+					glow.width = w * 4.5
+					line.default_color = Color.from_hsv(trail_hue, 0.95, 1.0)
+					glow.default_color = Color.from_hsv(trail_hue, 0.8, 1.0, 0.12)
 					line.clear_points()
 					glow.clear_points()
 					for p in spts:
 						line.add_point(p)
 						glow.add_point(p)
-						var w : float = 4.0 + clamp(tr["speed"] / 400.0, 0.0, 8.0) + _audio_sm * 7.0
-						line.width = w
-						glow.width = w * 4.5
-						line.default_color = Color.from_hsv(trail_hue, 0.95, 1.0)
-						glow.default_color = Color.from_hsv(trail_hue, 0.8, 1.0, 0.12)
 				1:  # CHALK — dashed / rough
 					if not _trails.has(id):
 						_trails[id] = _make_trail(id, sp, trail_hue)
 					var tr2 : Dictionary = _trails[id]
 					var prev2 : Vector2 = tr2["prev_pos"]
+					var line2 : Line2D = tr2["line"] as Line2D
+					var glow2 : Line2D = tr2["glow"] as Line2D
 					if sp.distance_to(prev2) >= MIN_DIST * 2:
 						tr2["head"] = (tr2["head"] + 1) % MAX_TRAIL_PTS
 						tr2["pts"][tr2["head"]] = sp
 						tr2["prev_pos"] = sp
 						_trails[id] = tr2
-						var line2 : Line2D = tr2["line"] as Line2D
-						var glow2 : Line2D = tr2["glow"] as Line2D
 					var h : int = tr2["head"]
 					var spts2 := _smooth_pts(tr2["pts"], (h + 1) % MAX_TRAIL_PTS, MAX_TRAIL_PTS)
+					line2.width = 9.0 + _audio_sm * 5.0
+					glow2.width = 14.0
+					line2.default_color = Color.from_hsv(trail_hue, 0.30, 0.95, 0.70)
+					glow2.default_color = Color(1, 1, 1, 0.04)
 					line2.clear_points()
 					glow2.clear_points()
 					for p in spts2:
 						line2.add_point(p + Vector2(randf_range(-1.5, 1.5), randf_range(-1.5, 1.5)))
 						glow2.add_point(p)
-						line2.width = 9.0 + _audio_sm * 5.0
-						glow2.width = 14.0
-						line2.default_color = Color.from_hsv(trail_hue, 0.30, 0.95, 0.70)
-						glow2.default_color = Color(1, 1, 1, 0.04)
 				2:  # SPRAY
 					_stamp_spray(sp, trail_hue)
 
