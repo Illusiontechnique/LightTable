@@ -66,6 +66,16 @@ class TrackingTests(unittest.TestCase):
         )
         self.assertEqual(event["timestamp"], 10.0)
 
+    def test_close_all_emits_exit_for_each_live_interaction(self):
+        generator = InteractionEventGenerator()
+        generator.update([
+            {"id": 3, "x": 0.25, "y": 0.75, "tracker": "Blob"},
+            {"id": 4, "x": 0.5, "y": 0.5, "tracker": "Blob"},
+        ], 10.0)
+        closed = generator.close_all(10.1)
+        self.assertEqual([event["event"] for event in closed], ["exit", "exit"])
+        self.assertEqual(generator.close_all(10.2), [])
+
 
 if __name__ == "__main__":
     unittest.main()

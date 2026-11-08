@@ -39,7 +39,8 @@ func _draw_cursor(p: Vector2, meta: Dictionary) -> void:
 	if meta.has("pointers") and not meta["pointers"]:
 		return
 		
-	var is_hand = meta.has("tracker") and meta["tracker"] == "Hands"
+	var tracker_name := str(meta.get("tracker", "")).to_lower()
+	var is_hand := tracker_name.contains("hand")
 
 	# Pointers: Shape of hands for Hands tracker, small arrow for others
 	if is_hand:

@@ -15,19 +15,6 @@ class TrackingManager:
     def reset(self):
         self._tracks.clear()
 
-    def close_all(self, timestamp):
-        events = []
-        for track_id, previous in list(self._tracks.items()):
-            detection = {
-                "id": track_id,
-                "x": previous["position"][0],
-                "y": previous["position"][1],
-                "tracker": previous.get("tracker", "Unknown"),
-            }
-            events.append(self._event("exit", detection, timestamp))
-        self._tracks.clear()
-        return events
-
     def update(self, detections, timestamp):
         timestamp = float(timestamp)
         active = {
@@ -116,6 +103,19 @@ class InteractionEventGenerator:
 
     def reset(self):
         self._tracks.clear()
+
+    def close_all(self, timestamp):
+        events = []
+        for track_id, previous in list(self._tracks.items()):
+            detection = {
+                "id": track_id,
+                "x": previous["position"][0],
+                "y": previous["position"][1],
+                "tracker": previous.get("tracker", "Unknown"),
+            }
+            events.append(self._event("exit", detection, timestamp))
+        self._tracks.clear()
+        return events
 
     def update(self, detections, timestamp):
         timestamp = float(timestamp)

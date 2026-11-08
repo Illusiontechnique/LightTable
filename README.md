@@ -36,6 +36,8 @@ Only a profile matching the current camera configuration is applied. Existing ma
 
 All six existing modes remain selectable: MediaPipe Hands, Blob, Motion, Color, Edge, and Object. Tracker outputs are associated by proximity into stable runtime IDs; timestamped histories expire after temporary loss, and smoothing is applied after identity association. EMA is initialized at the first measurement; Kalman transition timing uses elapsed time.
 
+For MediaPipe Hands, use the **Target Mode** control in the CV preview settings: `0` follows the palm, `1` follows the palm and switches to the index fingertip after an isolated-index pointing pose is stable for three frames, and `2` always follows the index fingertip. The preview marks the palm in orange, the index tip in yellow, and the active target with a green cross. The Godot hand skeleton and landmark dots are shown by default; press `H` to toggle them. These landmarks indicate tracked geometry, not physical surface contact.
+
 Each interaction datagram retains the existing envelope and `state` field and adds an `event` alias. Velocity and direction are optional:
 
 ```json

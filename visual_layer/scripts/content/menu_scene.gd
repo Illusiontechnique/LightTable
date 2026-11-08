@@ -307,7 +307,7 @@ func _select_card(idx: int) -> void:
 	if idx < _card_styles.size():
 		_card_styles[idx].bg_color     = _card_colors[idx]
 		_card_styles[idx].border_color = Color(1.0, 1.0, 1.0, 1.0)
-	var action := _card_actions[idx]
+	var action: Callable = _card_actions[idx]
 	get_tree().create_timer(0.30).timeout.connect(
 		func():
 			if is_instance_valid(self):

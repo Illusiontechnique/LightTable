@@ -576,8 +576,8 @@ func load_content_scene(script_path: String):
 	if not ResourceLoader.exists(script_path):
 		log_message("Scene load failed; resource not found: " + script_path)
 		return false
-	var scene_script = load(script_path)
-	if scene_script == null:
+	var scene_script = load(script_path) as GDScript
+	if scene_script == null or not scene_script.can_instantiate():
 		log_message("Scene load failed: " + script_path)
 		return false
 	if active_scene:

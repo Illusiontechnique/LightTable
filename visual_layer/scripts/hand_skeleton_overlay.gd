@@ -9,7 +9,7 @@ const CONNECTIONS: Array = [
 	[13,17],[0,17],[17,18],[18,19],[19,20]  # pinky + palm edge
 ]
 
-var show_skeleton: bool = false
+var show_skeleton: bool = true
 var hands_data: Array = []  # Array of Array[{x,y}] — raw 0-1 normalized per hand
 
 var _time: float = 0.0
@@ -56,3 +56,10 @@ func _draw() -> void:
 			var col := Color.from_hsv(hue, 0.88, 1.0, 0.38)
 
 			draw_line(a_pos, b_pos, col, 2.5, true)
+
+		for i in hand.size():
+			var landmark = hand[i]
+			var landmark_pos := Vector2(float(landmark["x"]), float(landmark["y"])) * vp
+			var radius := 7.0 if i == 8 else 4.0
+			var color := Color(1.0, 0.88, 0.25, 0.95) if i == 8 else Color(0.35, 0.9, 1.0, 0.85)
+			draw_circle(landmark_pos, radius, color)
