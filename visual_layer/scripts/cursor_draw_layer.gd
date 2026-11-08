@@ -21,6 +21,9 @@ func _process(_delta: float) -> void:
 func update_cursor(id: int, pos: Vector2, metadata: Dictionary = {}) -> void:
 	positions[id] = {"pos": pos, "t": Time.get_ticks_msec() * 0.001, "meta": metadata}
 
+func remove_cursor(id: int) -> void:
+	positions.erase(id)
+
 func clear_all() -> void:
 	positions.clear()
 

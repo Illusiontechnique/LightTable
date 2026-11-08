@@ -30,3 +30,6 @@ class BaseTracker(ABC):
 
     def reset(self):
         """Reset internal state (call on camera switch or re-init)."""
+
+    def close(self):
+        """Release optional tracker resources when the application exits."""

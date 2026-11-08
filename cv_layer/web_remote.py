@@ -16,12 +16,15 @@ each frame.
 """
 
 import json
+import math
 import secrets
 import socket
 import threading
 import time
+from collections import deque
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from flask import Flask, jsonify, redirect, request, session, url_for
 
@@ -29,7 +32,7 @@ from flask import Flask, jsonify, redirect, request, session, url_for
 # Config  (remote_config.json at project root, one level above cv_layer/)
 # ─────────────────────────────────────────────────────────────────────────────
 _CFG_PATH = Path(__file__).parent.parent / "remote_config.json"
-_DEFAULTS  = {"pin": "1234", "port": 5000}
+_DEFAULTS  = {"port": 5000}
 
 
 def _load_config() -> dict:
@@ -37,16 +40,23 @@ def _load_config() -> dict:
     if _CFG_PATH.exists():
         try:
             with open(_CFG_PATH) as f:
-                cfg.update(json.load(f))
-        except Exception:
-            pass
-    if "secret_key" not in cfg:
-        cfg["secret_key"] = secrets.token_hex(32)
-        try:
-            with open(_CFG_PATH, "w") as f:
-                json.dump(cfg, f, indent=2)
-        except Exception:
-            pass
+                saved = json.load(f)
+            if isinstance(saved, dict):
+                cfg.update(saved)
+        except (OSError, ValueError, TypeError) as exc:
+            print(f"[WebRemote] Invalid remote configuration; using defaults: {exc}")
+    pin = str(cfg.get("pin", ""))
+    if not pin.isdigit() or not 4 <= len(pin) <= 12 or pin == "1234":
+        cfg["pin"] = f"{secrets.randbelow(1_000_000):06d}"
+        cfg["generated_pin"] = True
+    else:
+        cfg["generated_pin"] = False
+    try:
+        cfg["port"] = max(1024, min(65535, int(cfg.get("port", 5000))))
+    except (TypeError, ValueError):
+        cfg["port"] = 5000
+    # Do not trust or reuse a repository-stored signing key for LAN sessions.
+    cfg["secret_key"] = secrets.token_hex(32)
     return cfg
 
 
@@ -56,7 +66,7 @@ def _get_local_ip() -> str:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
             return s.getsockname()[0]
-    except Exception:
+    except OSError:
         return "127.0.0.1"
 
 
@@ -92,9 +102,25 @@ def _load_profiles() -> dict:
     if _PROFILES_PATH.exists():
         try:
             with open(_PROFILES_PATH) as f:
-                return json.load(f)
-        except Exception:
-            pass
+                data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get("profiles"), list):
+                valid_profiles = []
+                for profile in data["profiles"]:
+                    if (
+                        isinstance(profile, dict)
+                        and isinstance(profile.get("id"), str)
+                        and isinstance(profile.get("first_name"), str)
+                        and isinstance(profile.get("last_name"), str)
+                        and isinstance(profile.get("created_at"), (int, float))
+                        and math.isfinite(float(profile.get("created_at")))
+                    ):
+                        valid_profiles.append(profile)
+                    else:
+                        print("[WebRemote] Ignoring malformed player profile")
+                return {"profiles": valid_profiles}
+            print("[WebRemote] Invalid profiles format; using an empty profile list")
+        except (OSError, ValueError, TypeError) as exc:
+            print(f"[WebRemote] Profiles could not be loaded: {exc}")
     return {"profiles": []}
 
 
@@ -102,8 +128,10 @@ def _save_profiles(data: dict):
     try:
         with open(_PROFILES_PATH, "w") as f:
             json.dump(data, f, indent=2)
-    except Exception:
-        pass
+        return True
+    except OSError as exc:
+        print(f"[WebRemote] Profiles could not be saved: {exc}")
+        return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -121,8 +149,13 @@ class ControlState:
         self._lock            = threading.Lock()
         self._pending_tracker: int | None = None
         self._t0              = time.monotonic()
+        self._godot_last_seen = 0.0
+        self._pending_scene_time = 0.0
         self._status = {
-            "scene":       "None",
+            "scene":       "Not confirmed",
+            "pending_scene": None,
+            "pending_scene_id": None,
+            "godot_connected": False,
             "audio_level": 0.0,
             "tracker":     TRACKER_NAMES[0],
             "tracker_idx": 0,
@@ -130,6 +163,8 @@ class ControlState:
             "detections":  0,
             "player_id":   None,
             "player_name": "Guest",
+            "camera": "unknown",
+            "calibration": "unknown",
         }
 
     # ── Called by Flask thread ───────────────────────────────────────────────
@@ -137,15 +172,35 @@ class ControlState:
         with self._lock:
             self._pending_tracker = idx
 
-    def set_scene_name(self, name: str):
+    def set_scene_name(self, name: str, request_id=None):
         with self._lock:
-            self._status["scene"] = name
+            self._status["pending_scene"] = name
+            self._status["pending_scene_id"] = request_id
+            self._status["scene_error"] = None
+            self._pending_scene_time = time.monotonic()
+
+    def fail_scene_request(self, request_id):
+        with self._lock:
+            if self._status["pending_scene_id"] == request_id:
+                self._status["pending_scene"] = None
+                self._status["pending_scene_id"] = None
+                self._status["scene_error"] = "Could not send scene request"
+
+    def update_godot_status(self, data):
+        with self._lock:
+            if "scene" in data and isinstance(data["scene"], str):
+                self._status["scene"] = data["scene"]
+            if data.get("request_id") == self._status["pending_scene_id"]:
+                self._status["pending_scene"] = None
+                self._status["pending_scene_id"] = None
+                self._status["scene_error"] = None
+            self._status["godot_connected"] = True
+            self._godot_last_seen = time.monotonic()
 
     def set_player(self, player_id: str | None, player_name: str = "Guest"):
         with self._lock:
             self._status["player_id"] = player_id
             self._status["player_name"] = player_name
-            self._status["scene"] = name
 
     # ── Called by CV main loop ───────────────────────────────────────────────
     def pop_tracker_request(self) -> int | None:
@@ -155,7 +210,7 @@ class ControlState:
             self._pending_tracker = None
             return idx
 
-    def update_status(self, audio: float, tracker_idx: int, detections: int):
+    def update_status(self, audio: float, tracker_idx: int, detections: int, **diagnostics):
         with self._lock:
             self._status.update({
                 "audio_level": round(audio, 3),
@@ -164,10 +219,21 @@ class ControlState:
                 "uptime_s":    int(time.monotonic() - self._t0),
                 "detections":  detections,
             })
+            self._status.update(diagnostics)
 
     def get_status(self) -> dict:
         with self._lock:
-            return dict(self._status)
+            status = dict(self._status)
+            now = time.monotonic()
+            status["godot_connected"] = now - self._godot_last_seen < 10.0
+            if status["pending_scene"] and now - self._pending_scene_time > 10.0:
+                status["pending_scene"] = None
+                status["pending_scene_id"] = None
+                status["scene_error"] = "No Godot confirmation received"
+                self._status["pending_scene"] = None
+                self._status["pending_scene_id"] = None
+                self._status["scene_error"] = status["scene_error"]
+            return status
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -210,6 +276,7 @@ h1{font-size:1.9rem;font-weight:200;letter-spacing:.55em;color:#32cee8;margin-bo
   <div class="dots">
     <span class="dot" id="d0"></span><span class="dot" id="d1"></span>
     <span class="dot" id="d2"></span><span class="dot" id="d3"></span>
+    <span class="dot" id="d4"></span><span class="dot" id="d5"></span>
   </div>
   <div class="grid">
     <button class="k" ontouchstart="" onclick="p('1')">1</button>
@@ -230,8 +297,8 @@ h1{font-size:1.9rem;font-weight:200;letter-spacing:.55em;color:#32cee8;margin-bo
 </div>
 <script>
 let pin='';
-function upd(){for(let i=0;i<4;i++)document.getElementById('d'+i).className='dot'+(i<pin.length?' on':'')}
-function p(d){if(pin.length<4){pin+=d;upd();if(pin.length===4)setTimeout(go,200)}}
+function upd(){for(let i=0;i<6;i++)document.getElementById('d'+i).className='dot'+(i<pin.length?' on':'')}
+function p(d){if(pin.length<12){pin+=d;upd()}}
 function bk(){if(pin.length){pin=pin.slice(0,-1);upd()}}
 async function go(){
   if(!pin.length)return;
@@ -294,6 +361,7 @@ header{background:#0b1520;border-bottom:1px solid #142834;padding:.75rem 1rem;
              margin:.75rem;padding:.9rem 1rem}
 .scene-now{font-size:1.3rem;font-weight:200;color:#32cee8;letter-spacing:.08em;margin-bottom:.55rem;
            white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.status-extra{font-size:.68rem;color:#547482;line-height:1.6;margin-top:.4rem}
 .stat-row{display:flex;align-items:center;gap:.75rem;font-size:.72rem;color:#345868}
 .abar{flex:1;height:5px;background:#101c28;border-radius:3px;overflow:hidden}
 .afill{height:100%;background:linear-gradient(90deg,#28a868,#32cee8);width:0%;
@@ -350,6 +418,7 @@ input[type=range]{flex:1;accent-color:#32cee8;height:22px;cursor:pointer}
     <div class="abar"><div class="afill" id="afill"></div></div>
     <span id="detTxt">0 pts</span>
   </div>
+  <div class="status-extra" id="runtimeStatus">Waiting for application status…</div>
 </div>
 
 <div class="sec">Scenes</div>
@@ -400,7 +469,7 @@ input[type=range]{flex:1;accent-color:#32cee8;height:22px;cursor:pointer}
 </div>
 
 <script>
-let curScene='', audioTimer=null;
+let audioTimer=null;
 
 // ── Profiles ─────────────────────────────────────────────────────────────────
 async function openProfiles(){
@@ -436,12 +505,13 @@ async function setPlayer(id){
 
 // ── Scene buttons ────────────────────────────────────────────────────────────
 async function loadScene(name){
-  curScene=name; hilite();
-  await fetch('/scene',{method:'POST',headers:{'Content-Type':'application/json'},
-                        body:JSON.stringify({scene:name})});
+  document.getElementById('sceneName').textContent='Requesting '+name+'…';
+  const r=await fetch('/scene',{method:'POST',headers:{'Content-Type':'application/json'},
+                                body:JSON.stringify({scene:name})});
+  if(!r.ok) document.getElementById('sceneName').textContent='Scene request failed';
 }
-function hilite(){
-  document.querySelectorAll('.sb').forEach(b=>b.classList.toggle('active',b.dataset.scene===curScene));
+function hilite(scene){
+  document.querySelectorAll('.sb').forEach(b=>b.classList.toggle('active',b.dataset.scene===scene));
 }
 
 // ── Tracker ──────────────────────────────────────────────────────────────────
@@ -472,10 +542,16 @@ async function poll(){
   try{
     const r=await fetch('/status');
     const d=await r.json();
-    document.getElementById('conn').className='conn live';
-    if(d.scene&&d.scene!==curScene){curScene=d.scene;hilite();}
-    document.getElementById('sceneName').textContent=d.scene||'—';
-    document.getElementById('profDisplay').innerHTML = 'Hi, <b>' + (d.player_name || 'Guest') + '</b>!';
+    document.getElementById('conn').className='conn'+(d.godot_connected?' live':'');
+    const confirmed=d.scene||'No scene confirmation';
+    document.getElementById('sceneName').textContent=d.pending_scene
+      ? confirmed+' · Loading '+d.pending_scene
+      : confirmed;
+    hilite(d.scene||'');
+    document.getElementById('profDisplay').textContent='Hi, '+(d.player_name||'Guest')+'!';
+    document.getElementById('runtimeStatus').textContent=
+      (d.godot_connected?'Godot connected':'Godot not confirmed')+' · Camera '+(d.camera||'unknown')+
+      ' · Calibration '+(d.calibration||'unknown')+(d.scene_error?' · '+d.scene_error:'');
     document.getElementById('afill').style.width=(d.audio_level*100)+'%';
     document.getElementById('detTxt').textContent=(d.detections||0)+' pts';
     const u=d.uptime_s||0,mm=String(Math.floor(u/60)).padStart(2,'0'),ss=String(u%60).padStart(2,'0');
@@ -525,13 +601,45 @@ class WebRemote:
         self._port        = int(self._cfg.get("port", 5000))
         self._audio_floor = 0.01
         self._audio_ceil  = 0.18
+        self._udp_socket = None
+        self._login_attempts = {}
 
     # ── UDP helper ────────────────────────────────────────────────────────────
     def _send_godot(self, data: dict) -> None:
-        """Fire-and-forget UDP command to Godot."""
+        """Send a UDP command from the status-listener port when available."""
         payload = json.dumps(data).encode()
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.sendto(payload, (self._godot_host, self._godot_port))
+        if self._udp_socket is not None:
+            self._udp_socket.sendto(payload, (self._godot_host, self._godot_port))
+        else:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.sendto(payload, (self._godot_host, self._godot_port))
+
+    def _listen_godot_status(self):
+        next_request = 0.0
+        while True:
+            try:
+                now = time.monotonic()
+                if now >= next_request:
+                    request_packet = json.dumps({
+                        "type": "command", "cmd": "status_request"
+                    }).encode("utf-8")
+                    self._udp_socket.sendto(
+                        request_packet, (self._godot_host, self._godot_port)
+                    )
+                    next_request = now + 2.0
+                payload, sender = self._udp_socket.recvfrom(65535)
+                if sender[0] != "127.0.0.1":
+                    continue
+                data = json.loads(payload.decode("utf-8"))
+                if isinstance(data, dict) and data.get("type") == "godot_status":
+                    self._state.update_godot_status(data)
+            except socket.timeout:
+                continue
+            except OSError as exc:
+                print(f"[WebRemote] Godot status listener stopped: {exc}")
+                return
+            except (UnicodeDecodeError, ValueError):
+                print("[WebRemote] Ignored malformed Godot status datagram")
 
     # ── Page builder ──────────────────────────────────────────────────────────
     def _build_main_page(self) -> str:
@@ -555,14 +663,21 @@ class WebRemote:
         app.secret_key                  = self._cfg["secret_key"]
         app.permanent_session_lifetime  = timedelta(hours=8)
         app.config.update(
-            SESSION_COOKIE_SAMESITE='Lax',
+            SESSION_COOKIE_SAMESITE='Strict',
             SESSION_COOKIE_SECURE=False,
             SESSION_COOKIE_HTTPONLY=True
         )
 
-        pin_cfg = str(self._cfg.get("pin", "1234"))
+        pin_cfg = str(self._cfg["pin"])
         state   = self._state
         remote  = self
+
+        @app.before_request
+        def _same_origin_posts():
+            if request.method == "POST":
+                origin = request.headers.get("Origin")
+                if origin and urlsplit(origin).netloc.lower() != request.host.lower():
+                    return jsonify({"ok": False, "error": "cross-origin request rejected"}), 403
 
         def _authed() -> bool:
             return session.get("authed") is True
@@ -577,12 +692,25 @@ class WebRemote:
         @app.post("/login")
         def login_post():
             data = request.get_json(silent=True) or {}
-            pin  = str(data.get("pin", ""))
+            if not isinstance(data, dict):
+                return jsonify({"ok": False, "error": "invalid request"}), 400
+            pin = str(data.get("pin", ""))
+            client = request.remote_addr or "unknown"
+            now = time.monotonic()
+            attempts = remote._login_attempts.setdefault(client, deque())
+            while attempts and now - attempts[0] > 60:
+                attempts.popleft()
+            if len(attempts) >= 5:
+                return jsonify({"ok": False, "error": "too many attempts"}), 429
             # Use compare_digest to guard against timing attacks
             ok = secrets.compare_digest(pin, pin_cfg)
             if ok:
+                attempts.clear()
+                session.clear()
                 session.permanent = True
                 session["authed"] = True
+            else:
+                attempts.append(now)
             return jsonify({"ok": ok})
 
         @app.get("/logout")
@@ -626,9 +754,14 @@ class WebRemote:
             if not _authed():
                 return jsonify({"ok": False, "error": "unauthorized"}), 401
             data = request.get_json(silent=True) or {}
-            first = data.get("first_name", "").strip()
-            last = data.get("last_name", "").strip()
-            if not first or not last:
+            if not isinstance(data, dict):
+                return jsonify({"ok": False, "error": "invalid request"}), 400
+            first = data.get("first_name", "")
+            last = data.get("last_name", "")
+            if not isinstance(first, str) or not isinstance(last, str):
+                return jsonify({"ok": False, "error": "names must be text"}), 400
+            first, last = first.strip(), last.strip()
+            if not first or not last or len(first) > 40 or len(last) > 40:
                 return jsonify({"ok": False, "error": "Name required"}), 400
             
             profiles_data = _load_profiles()
@@ -639,7 +772,8 @@ class WebRemote:
                 "last_name": last,
                 "created_at": time.time()
             })
-            _save_profiles(profiles_data)
+            if not _save_profiles(profiles_data):
+                return jsonify({"ok": False, "error": "profile could not be saved"}), 500
             return jsonify({"ok": True, "id": new_id})
 
         @app.post("/set_player")
@@ -647,7 +781,11 @@ class WebRemote:
             if not _authed():
                 return jsonify({"ok": False, "error": "unauthorized"}), 401
             data = request.get_json(silent=True) or {}
+            if not isinstance(data, dict):
+                return jsonify({"ok": False, "error": "invalid request"}), 400
             pid = data.get("id")
+            if pid is not None and not isinstance(pid, str):
+                return jsonify({"ok": False, "error": "invalid player id"}), 400
             if not pid:
                 state.set_player(None, "Guest")
                 return jsonify({"ok": True})
@@ -664,24 +802,41 @@ class WebRemote:
         def set_scene():
             if not _authed():
                 return jsonify({"ok": False, "error": "unauthorized"}), 401
-            name = request.get_json(silent=True, force=True).get("scene", "")
-            if name not in SCENE_SCRIPTS:
+            data = request.get_json(silent=True) or {}
+            if not isinstance(data, dict):
+                return jsonify({"ok": False, "error": "invalid request"}), 400
+            name = data.get("scene", "")
+            if not isinstance(name, str) or name not in SCENE_SCRIPTS:
                 return jsonify({"ok": False, "error": "unknown scene"}), 400
-            state.set_scene_name(name)
-            remote._send_godot({
-                "type": "command",
-                "cmd":  "load_scene",
-                "scene": name,
-                "script": SCENE_SCRIPTS[name],
-            })
-            return jsonify({"ok": True})
+            request_id = secrets.token_hex(6)
+            state.set_scene_name(name, request_id)
+            try:
+                remote._send_godot({
+                    "type": "command",
+                    "cmd": "load_scene",
+                    "scene": name,
+                    "script": SCENE_SCRIPTS[name],
+                    "request_id": request_id,
+                })
+            except OSError as exc:
+                state.fail_scene_request(request_id)
+                print(f"[WebRemote] Could not send scene request: {exc}")
+                return jsonify({"ok": False, "error": "Godot command could not be sent"}), 503
+            return jsonify({"ok": True, "pending": True})
 
         @app.post("/tracker")
         def set_tracker():
             if not _authed():
                 return jsonify({"ok": False, "error": "unauthorized"}), 401
-            idx = int(request.get_json(silent=True, force=True).get("tracker_idx", 0))
-            idx = max(0, min(idx, len(TRACKER_NAMES) - 1))
+            data = request.get_json(silent=True) or {}
+            if not isinstance(data, dict):
+                return jsonify({"ok": False, "error": "invalid request"}), 400
+            try:
+                idx = int(data["tracker_idx"])
+            except (TypeError, ValueError, KeyError):
+                return jsonify({"ok": False, "error": "invalid tracker index"}), 400
+            if not 0 <= idx < len(TRACKER_NAMES):
+                return jsonify({"ok": False, "error": "invalid tracker index"}), 400
             state.request_tracker(idx)
             return jsonify({"ok": True})
 
@@ -689,22 +844,35 @@ class WebRemote:
         def set_audio():
             if not _authed():
                 return jsonify({"ok": False, "error": "unauthorized"}), 401
-            data = request.get_json(silent=True, force=True) or {}
-            fl   = float(data.get("floor", remote._audio_floor))
-            cl   = float(data.get("ceil",  remote._audio_ceil))
-            fl   = max(0.0, min(fl, 1.0))
-            cl   = max(0.0, min(cl, 1.0))
+            data = request.get_json(silent=True) or {}
+            if not isinstance(data, dict):
+                return jsonify({"ok": False, "error": "invalid request"}), 400
+            try:
+                fl = float(data.get("floor", remote._audio_floor))
+                cl = float(data.get("ceil", remote._audio_ceil))
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "audio levels must be numbers"}), 400
+            if not math.isfinite(fl) or not math.isfinite(cl) or not 0 <= fl < cl <= 1:
+                return jsonify({"ok": False, "error": "audio range must satisfy 0 <= floor < ceiling <= 1"}), 400
+            try:
+                remote._send_godot({"type": "command", "cmd": "set_audio",
+                                    "floor": fl, "ceiling": cl})
+            except OSError as exc:
+                print(f"[WebRemote] Could not send audio command: {exc}")
+                return jsonify({"ok": False, "error": "Godot command could not be sent"}), 503
             remote._audio_floor = fl
-            remote._audio_ceil  = cl
-            remote._send_godot({"type": "command", "cmd": "set_audio",
-                                 "floor": fl, "ceiling": cl})
+            remote._audio_ceil = cl
             return jsonify({"ok": True})
 
         @app.post("/clear_cursors")
         def clear_cursors():
             if not _authed():
                 return jsonify({"ok": False, "error": "unauthorized"}), 401
-            remote._send_godot({"type": "command", "cmd": "clear_cursors"})
+            try:
+                remote._send_godot({"type": "command", "cmd": "clear_cursors"})
+            except OSError as exc:
+                print(f"[WebRemote] Could not send clear-cursors command: {exc}")
+                return jsonify({"ok": False, "error": "Godot command could not be sent"}), 503
             return jsonify({"ok": True})
 
         # ── Status ────────────────────────────────────────────────────────────
@@ -730,7 +898,7 @@ class WebRemote:
             out = Path(__file__).parent.parent / "visual_layer" / "assets" / "remote_qr.png"
             out.parent.mkdir(parents=True, exist_ok=True)
             img.save(str(out))
-        except Exception as e:
+        except (ImportError, OSError, TypeError, ValueError) as e:
             print(f"[WebRemote] QR generation skipped: {e}")
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -740,6 +908,20 @@ class WebRemote:
         url = self.get_url()
         self._generate_qr(url)
         print(f"[WebRemote] QR saved to visual_layer/assets/remote_qr.png")
+        if self._cfg.get("generated_pin"):
+            print(f"[WebRemote] A temporary six-digit PIN was generated for this run: {self._cfg['pin']}")
+        try:
+            self._udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._udp_socket.bind(("127.0.0.1", 7001))
+            self._udp_socket.settimeout(1.0)
+            threading.Thread(
+                target=self._listen_godot_status, name="GodotStatus", daemon=True
+            ).start()
+        except OSError as exc:
+            if self._udp_socket is not None:
+                self._udp_socket.close()
+                self._udp_socket = None
+            print(f"[WebRemote] Godot confirmation listener unavailable: {exc}")
 
         def _run():
             import logging

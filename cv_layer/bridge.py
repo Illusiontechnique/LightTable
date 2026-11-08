@@ -10,3 +10,6 @@ class InteractionBridge:
     def send(self, data):
         message = json.dumps(data).encode('utf-8')
         self.sock.sendto(message, (self.host, self.port))
+
+    def close(self):
+        self.sock.close()

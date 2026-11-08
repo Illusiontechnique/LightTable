@@ -70,6 +70,57 @@ _BTN   = "#2d2d2d"
 _BTN_H = "#3a3a3a"
 
 
+def _load_settings(path=_SETTINGS_PATH):
+    defaults = {
+        "camera_idx": 0, "tracker_idx": 0, "smoothing_mode": 1,
+        "ema_alpha": 35, "resolution": _DEFAULT_RES, "brightness": 50,
+        "contrast": 50, "flip_h": False, "show_mask": False,
+        "target_fps": 30, "pointers_visible": True,
+    }
+    if path.exists():
+        try:
+            with open(path, encoding="utf-8") as settings_file:
+                saved = json.load(settings_file)
+            if isinstance(saved, dict):
+                defaults.update(saved)
+            else:
+                print("[ControlWindow] Settings must be a JSON object; using defaults")
+        except (OSError, ValueError, TypeError) as exc:
+            print(f"[ControlWindow] Settings could not be loaded: {exc}")
+
+    def bounded_int(key, default, low, high):
+        try:
+            return max(low, min(high, int(defaults.get(key, default))))
+        except (TypeError, ValueError):
+            print(f"[ControlWindow] Invalid {key} setting; using {default}")
+            return default
+
+    def safe_bool(key, default):
+        value = defaults.get(key, default)
+        if isinstance(value, bool):
+            return value
+        if value in (0, 1):
+            return bool(value)
+        if isinstance(value, str) and value.lower() in ("true", "false"):
+            return value.lower() == "true"
+        print(f"[ControlWindow] Invalid {key} setting; using {default}")
+        return default
+
+    defaults["camera_idx"] = bounded_int("camera_idx", 0, 0, 9)
+    defaults["tracker_idx"] = bounded_int("tracker_idx", 0, 0, len(TRACKER_NAMES) - 1)
+    defaults["smoothing_mode"] = bounded_int("smoothing_mode", 1, 0, len(SMOOTH_LABELS) - 1)
+    defaults["ema_alpha"] = bounded_int("ema_alpha", 35, 1, 95)
+    defaults["target_fps"] = bounded_int("target_fps", 30, 1, 60)
+    defaults["brightness"] = bounded_int("brightness", 50, 0, 100)
+    defaults["contrast"] = bounded_int("contrast", 50, 0, 100)
+    for key in ("flip_h", "show_mask", "pointers_visible"):
+        defaults[key] = safe_bool(key, key == "pointers_visible")
+    if defaults.get("resolution") not in [resolution[0] for resolution in RESOLUTIONS]:
+        print("[ControlWindow] Invalid resolution setting; using default")
+        defaults["resolution"] = _DEFAULT_RES
+    return defaults
+
+
 class ControlWindow:
     """
     Unified camera preview + settings panel in a single Tkinter window.
@@ -98,25 +149,7 @@ class ControlWindow:
         self._preview_scale  = 1.0         # last scale used → click coord mapping
         self._pending_keys: list = []
 
-        # Load persisted settings
-        defaults = {
-            "camera_idx": 0,
-            "tracker_idx": 0,
-            "smoothing_mode": 1,
-            "ema_alpha": 35,
-            "resolution": _DEFAULT_RES,
-            "brightness": 50,
-            "contrast": 50,
-            "flip_h": False,
-            "show_mask": False,
-            "target_fps": 30,
-            "pointers_visible": True
-        }
-        if _SETTINGS_PATH.exists():
-            try:
-                with open(_SETTINGS_PATH) as f:
-                    defaults.update(json.load(f))
-            except: pass
+        defaults = _load_settings()
 
         # ── Global Tk variables ─────────────────────────────────────────────
         self._camera_var    = tk.IntVar(value=defaults["camera_idx"])
@@ -137,6 +170,8 @@ class ControlWindow:
 
         # External callback
         self._click_callback = None
+        self._calibration_action_callback = None
+        self._last_saved_settings = None
 
         self._build_ui()
         self._root.bind_all("<KeyPress>", self._on_keypress)
@@ -148,7 +183,7 @@ class ControlWindow:
         self._alive = False
         try:
             self._root.destroy()
-        except Exception:
+        except tk.TclError:
             pass
 
     # ------------------------------------------------------------------
@@ -250,6 +285,37 @@ class ControlWindow:
                 bg=_DARK, fg=_TXT2, selectcolor="#333",
                 activebackground=_DARK, font=("Helvetica", 9),
             ).pack(side="left", padx=(0, 10))
+
+        self._sep(right)
+        self._add_section_label(right, "CALIBRATION")
+        self._calibration_status = tk.Label(
+            right, text="Uncalibrated", bg=_DARK, fg=_TXT,
+            font=("Helvetica", 8), justify="left", wraplength=275, anchor="w",
+        )
+        self._calibration_status.pack(fill="x", pady=(2, 4))
+        self._calibration_config = tk.Label(
+            right, text="Camera: waiting", bg=_DARK, fg=_TXT2,
+            font=("Helvetica", 8), justify="left", anchor="w",
+        )
+        self._calibration_config.pack(fill="x", pady=(0, 4))
+        calibration_buttons = tk.Frame(right, bg=_DARK)
+        calibration_buttons.pack(fill="x")
+        for label, action in (
+            ("Start", "start"), ("Undo", "undo"), ("Reset", "reset"),
+            ("Cancel", "cancel"), ("Save", "save"), ("Load", "load"),
+        ):
+            tk.Button(
+                calibration_buttons, text=label, bg=_BTN, fg=_TXT,
+                activebackground=_BTN_H, activeforeground="white",
+                font=("Helvetica", 8), relief="flat", padx=3,
+                command=lambda selected=action: self._calibration_action(selected),
+            ).pack(side="left", expand=True, fill="x", padx=1)
+
+        self._diagnostics_label = tk.Label(
+            right, text="Camera: waiting", bg=_DARK, fg=_TXT2,
+            font=("Helvetica", 8), justify="left", wraplength=275, anchor="w",
+        )
+        self._diagnostics_label.pack(fill="x", pady=(5, 0))
 
     # ------------------------------------------------------------------
     # UI helpers
@@ -374,6 +440,32 @@ class ControlWindow:
         """Register fn(frame_x: int, frame_y: int) for calibration clicks."""
         self._click_callback = fn
 
+    def set_calibration_action_callback(self, fn):
+        self._calibration_action_callback = fn
+
+    def _calibration_action(self, action):
+        if self._calibration_action_callback:
+            self._calibration_action_callback(action)
+
+    def update_calibration_status(self, state, message, camera_idx=None, resolution=None):
+        self._calibration_status.config(text=f"{state.capitalize()}: {message}")
+        if camera_idx is not None and resolution is not None:
+            self._calibration_config.config(
+                text=f"Camera {camera_idx} • {resolution[0]}×{resolution[1]}"
+            )
+
+    def update_diagnostics(self, status):
+        self._diagnostics_label.config(
+            text=(
+                f"Camera: {status.get('camera', 'unavailable')}  "
+                f"Capture: {status.get('capture_fps', 0):.1f} fps\n"
+                f"Processing: {status.get('processing_fps', 0):.1f} fps  "
+                f"Detections: {status.get('detections', 0)}\n"
+                f"Mode: {status.get('tracker', 'Unknown')}  "
+                f"UDP: {status.get('udp', 'waiting')}"
+            )
+        )
+
     def _on_preview_click(self, event: tk.Event):
         if not self._preview_on or not self._click_callback:
             return
@@ -451,7 +543,11 @@ class ControlWindow:
             "target_fps":       s["Target FPS"],
             "pointers_visible": s["Pointers"],
         }
+        if save_data == self._last_saved_settings:
+            return
         try:
             with open(_SETTINGS_PATH, "w") as f:
                 json.dump(save_data, f, indent=2)
-        except: pass
+            self._last_saved_settings = save_data
+        except OSError as exc:
+            print(f"[ControlWindow] Settings could not be saved: {exc}")

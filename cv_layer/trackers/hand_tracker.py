@@ -102,3 +102,8 @@ class HandTracker(BaseTracker):
     def reset(self):
         self._last_results = None
         self._init_hands()
+
+    def close(self):
+        if hasattr(self, "hands"):
+            self.hands.close()
+            del self.hands

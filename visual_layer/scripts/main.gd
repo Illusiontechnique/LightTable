@@ -38,6 +38,7 @@ var audio_floor_slider: HSlider
 var audio_ceiling_slider: HSlider
 var console_toggle_button: Button
 var console_visible := true
+var active_scene_label := "Not confirmed"
 
 # Simple interaction visualizer (circles that appear at hand positions)
 func _ready():
@@ -378,6 +379,9 @@ func dismiss_welcome_screen():
 		var fade = create_tween()
 		fade.tween_property(welcome_overlay, "modulate:a", 0.0, 0.45)
 		fade.tween_callback(welcome_overlay.queue_free)
+		fade.tween_callback(func():
+			if active_scene == null:
+				load_content_scene("res://scripts/content/menu_scene.gd"))
 		welcome_overlay = null
 		welcome_status_label = null
 
@@ -540,6 +544,7 @@ func setup_scene_buttons():
 	var scene_section = create_dashboard_section(btn_container, "SCENES", Color(1.0, 0.88, 0.55, 0.75))
 	
 	var scenes = {
+		"Menu":           "res://scripts/content/menu_scene.gd",
 		"Water":          "res://scripts/content/water_scene.gd",
 		"Balloons":       "res://scripts/content/balloons_scene.gd",
 		"Bouncing Balls": "res://scripts/content/bouncing_balls_scene.gd",
@@ -568,12 +573,19 @@ func setup_scene_buttons():
 		scene_section.add_child(btn)
 
 func load_content_scene(script_path: String):
+	if not ResourceLoader.exists(script_path):
+		log_message("Scene load failed; resource not found: " + script_path)
+		return false
+	var scene_script = load(script_path)
+	if scene_script == null:
+		log_message("Scene load failed: " + script_path)
+		return false
 	if active_scene:
 		active_scene.queue_free()
 	
 	var new_node = Node2D.new()
 	new_node.name = "ContentScene"
-	new_node.set_script(load(script_path))
+	new_node.set_script(scene_script)
 	add_child(new_node)
 	move_child(new_node, 0) # Keep it behind UI
 	active_scene = new_node
@@ -592,9 +604,13 @@ func load_content_scene(script_path: String):
 
 	if current_scene_index >= 0:
 		_show_scene_title(scene_list[current_scene_index]["name"])
+		active_scene_label = scene_list[current_scene_index]["name"]
+	else:
+		active_scene_label = script_path.get_file()
 
 	log_message("Loaded Scene: " + script_path)
 	LTLog.event("scene_load", {"scene": script_path, "fps": Engine.get_frames_per_second()})
+	return true
 
 func _show_scene_title(scene_name: String) -> void:
 	var existing := get_node_or_null("SceneTitleOverlay")
@@ -711,19 +727,24 @@ func refresh_console_toggle_label():
 func _on_clear_interactions_pressed():
 	for c in interaction_container.get_children():
 		c.queue_free()
+	for point in hand_points_container.get_children():
+		point.queue_free()
 	if cursor_draw_layer:
 		cursor_draw_layer.clear_all()
 
 # ─── Phone web remote commands ────────────────────────────────────────────────
 func _on_remote_command(cmd: Dictionary) -> void:
 	var c : String = cmd.get("cmd", "")
-	print("[Remote] cmd=", c, " data=", cmd)
+	if c != "status_request":
+		print("[Remote] cmd=", c, " data=", cmd)
 	match c:
+		"status_request":
+			pass
 		"load_scene":
 			var script : String = cmd.get("script", "")
 			if script != "":
-				load_content_scene(script)
-				log_message("Remote: loaded " + cmd.get("scene", script))
+				if load_content_scene(script):
+					log_message("Remote: loaded " + cmd.get("scene", script))
 		"set_audio":
 			var fl : float = float(cmd.get("floor",   audio_input_floor))
 			var cl : float = float(cmd.get("ceiling", audio_input_ceiling))
@@ -737,8 +758,20 @@ func _on_remote_command(cmd: Dictionary) -> void:
 		"clear_cursors":
 			_on_clear_interactions_pressed()
 			log_message("Remote: cursors cleared")
+	receiver.send_status(active_scene_label, str(cmd.get("request_id", "")))
 
 func _on_interaction_received(id: int, pos: Vector2, state: String, metadata: Dictionary = {}):
+	if state == "exit":
+		var old_indicator = interaction_container.get_node_or_null(str(id))
+		if old_indicator:
+			old_indicator.queue_free()
+		var old_point = hand_points_container.get_node_or_null(str(id))
+		if old_point:
+			old_point.queue_free()
+		if cursor_draw_layer:
+			cursor_draw_layer.remove_cursor(id)
+		return
+
 	# Map normalized 0-1 to screen size
 	var screen_pos = pos * get_viewport_rect().size
 	
@@ -769,8 +802,8 @@ func _on_interaction_received(id: int, pos: Vector2, state: String, metadata: Di
 	
 	dev_point.position = pos * cam_rect.size - Vector2(5, 5)
 	
-	if id != 99 and state == "press": # Only log non-simulated real events
-		log_message("Interaction Start: ID " + str(id))
+	if id != 99 and state == "enter":
+		log_message("Interaction Enter: ID " + str(id))
 		LTLog.event("touch", {"id": id, "x": snapped(pos.x, 0.001), "y": snapped(pos.y, 0.001)})
 
 func _on_track_mode_changed(mode: String):

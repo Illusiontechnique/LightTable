@@ -1,11 +1,13 @@
 import cv2
 import numpy as np
 import time
+from collections import deque
 
 from bridge         import InteractionBridge
 from calibration    import Calibration
 from control_window import ControlWindow, TRACKER_NAMES, SMOOTH_LABELS
 from smoothing      import KalmanSmoother, ExponentialSmoother
+from tracking       import TrackingManager, InteractionEventGenerator
 from web_remote     import ControlState, WebRemote
 from trackers       import (
     HandTracker, BlobTracker, MotionTracker,
@@ -31,6 +33,8 @@ class LightTableCV:
         self.ui          = ControlWindow()
         self.kalman      = KalmanSmoother()
         self.ema         = ExponentialSmoother(alpha=0.35)
+        self.tracking    = TrackingManager()
+        self.interactions = InteractionEventGenerator()
 
         self._tracker_idx  = 0
         self._cam_idx      = 0
@@ -39,17 +43,23 @@ class LightTableCV:
         self.ui.rebuild_for_tracker(self.tracker)
         self._last_detection_count = 0
         self._last_skeleton_send   = 0.0   # throttle: max 20 fps
+        self._capture_times = deque(maxlen=30)
+        self._processing_times = deque(maxlen=30)
+        self._last_udp_ok = None
+        self._tracker_error = None
+        self._camera_connected = False
 
         # Phone web remote
         self._ctrl_state = ControlState()
         self._remote     = WebRemote(self._ctrl_state, godot_host=osc_ip, godot_port=osc_port)
+        self.ui.set_calibration_action_callback(self._calibration_action)
 
     # ------------------------------------------------------------------
-    # OSC output
+    # JSON-over-UDP output
     # ------------------------------------------------------------------
-    def send_interaction(self, id, x, y, state="move", pointers=True):
+    def send_interaction(self, id, x, y, state="move", pointers=True, **metadata):
         cal_x, cal_y = self.calibration.apply(x, y)
-        if self.calibration.matrix is not None:
+        if self.calibration.state == Calibration.CALIBRATED:
             # Calibration warp maps to 1920×1080 space
             norm_x = float(np.clip(cal_x / 1920.0, 0.0, 1.0))
             norm_y = float(np.clip(cal_y / 1080.0, 0.0, 1.0))
@@ -58,20 +68,38 @@ class LightTableCV:
             res_w, res_h = self._current_res
             norm_x = float(np.clip(cal_x / res_w, 0.0, 1.0))
             norm_y = float(np.clip(cal_y / res_h, 0.0, 1.0))
-        self.bridge.send({
+        packet = {
             "type":      "interaction",
             "id":        id,
             "x":         norm_x,
             "y":         norm_y,
             "state":     state,
+            "event":     state,
             "pointers":  pointers,
-            "tracker":   self.tracker.name
-        })
+            "tracker":   self.tracker.name,
+            "timestamp": time.monotonic(),
+        }
+        packet.update(metadata)
+        self._send(packet)
+
+    def _send(self, packet):
+        try:
+            self.bridge.send(packet)
+            self._last_udp_ok = True
+            return True
+        except OSError as exc:
+            self._last_udp_ok = False
+            print(f"[UDP] Could not send packet to Godot: {exc}")
+            return False
+
+    def _send_event(self, event, pointers=True):
+        event["pointers"] = pointers
+        self._send(event)
 
     # ------------------------------------------------------------------
     # Smoothing
     # ------------------------------------------------------------------
-    def _smooth(self, mode: int, ema_raw: int, detections: list) -> list:
+    def _smooth(self, mode: int, ema_raw: int, detections: list, timestamp: float) -> list:
         """Apply per-ID smoothing.  mode: 0=none  1=EMA  2=Kalman."""
         if mode == 0:
             return detections
@@ -81,7 +109,7 @@ class LightTableCV:
             if mode == 1:
                 sx, sy = self.ema.smooth(d["id"], d["x"], d["y"])
             else:
-                sx, sy = self.kalman.smooth(d["id"], d["x"], d["y"])
+                sx, sy = self.kalman.smooth(d["id"], d["x"], d["y"], timestamp)
             out.append({**d, "x": sx, "y": sy})
         return out
 
@@ -105,14 +133,34 @@ class LightTableCV:
     # ------------------------------------------------------------------
     # Main per-frame processing (tracker runs on clean frame; overlays on display)
     # ------------------------------------------------------------------
-    def process_frame(self, frame, settings: dict):
+    def process_frame(self, frame, settings: dict, timestamp=None):
+        timestamp = time.monotonic() if timestamp is None else timestamp
+        processing_started = time.perf_counter()
+        self.tracking.max_distance = max(
+            120.0, float(np.hypot(*self._current_res)) * 0.12
+        )
         # 1. Run tracker on the adjusted (but overlay-free) frame
-        detections = self.tracker.process(frame)
-        detections = self._smooth(settings["Smoothing"], settings["EMA Respons"], detections)
+        try:
+            raw_detections = self.tracker.process(frame)
+            self._tracker_error = None
+        except Exception as exc:
+            if self._tracker_error != str(exc):
+                print(f"[Tracker] {self.tracker.name} failed for this frame: {exc}")
+                self._tracker_error = str(exc)
+            raw_detections = []
+        detections, expired = self.tracking.update(raw_detections, timestamp)
+        for track_id in expired:
+            self.ema.clear(track_id)
+            self.kalman.clear(track_id)
+        detections = self._smooth(
+            settings["Smoothing"], settings["EMA Respons"], detections, timestamp
+        )
         self._last_detection_count = len(detections)   # expose for status reporting
 
         # 2. Build display image
-        if settings["Show Mask"] and hasattr(self.tracker, "_mask") and self.tracker._mask is not None:
+        if self.calibration.state == Calibration.SELECTING:
+            display = frame.copy()
+        elif settings["Show Mask"] and hasattr(self.tracker, "_mask") and self.tracker._mask is not None:
             display = cv2.cvtColor(self.tracker._mask, cv2.COLOR_GRAY2BGR)
         else:
             display = self.tracker.draw_debug(frame.copy(), detections)
@@ -125,15 +173,14 @@ class LightTableCV:
                         (p[0] + 10, p[1] + 12),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
-        if len(self.calibration.points) < 4:
-            labels = ["Top-Left", "Top-Right", "Bottom-Right", "Bottom-Left"]
-            msg = (f"CALIBRATE {len(self.calibration.points)+1}/4 "
-                   f"— click {labels[len(self.calibration.points)]}")
-            cv2.putText(display, msg, (20, 38),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 50, 255), 2)
-        else:
-            cv2.putText(display, "Calibrated  [c]=reset", (20, 38),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 0), 1)
+        if len(self.calibration.points) >= 3:
+            cv2.polylines(
+                display, [np.asarray(self.calibration.points, dtype=np.int32)],
+                len(self.calibration.points) == 4, (0, 220, 255), 2,
+            )
+        status_color = (0, 220, 0) if self.calibration.state == Calibration.CALIBRATED else (0, 80, 255)
+        cv2.putText(display, f"{self.calibration.state.upper()}: {self.calibration.message}",
+                    (20, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.48, status_color, 1)
 
         # 4. HUD
         smooth_lbl = SMOOTH_LABELS[settings["Smoothing"]]
@@ -144,11 +191,31 @@ class LightTableCV:
                     (10, display.shape[0] - 12),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
 
-        # 5. Send interactions over OSC
-        for d in detections:
-            # Add pointer visibility flag to each interaction for the visuals
-            d["pointers"] = settings.get("Pointers", True)
-            self.send_interaction(d["id"], d["x"], d["y"], pointers=d["pointers"])
+        # 5. Convert stabilized detections to normalized interaction points.
+        normalized = []
+        for detection in detections:
+            x, y = self.calibration.apply(detection["x"], detection["y"])
+            if self.calibration.state == Calibration.CALIBRATED:
+                target_w, target_h = self.calibration.target_size
+                x, y = x / target_w, y / target_h
+            else:
+                width, height = self._current_res
+                x, y = x / width, y / height
+            point = {
+                "id": detection["id"],
+                "x": float(np.clip(x, 0.0, 1.0)),
+                "y": float(np.clip(y, 0.0, 1.0)),
+                "tracker": self.tracker.name,
+                "timestamp": timestamp,
+                "confidence": detection.get("confidence"),
+            }
+            normalized.append(point)
+        interaction_points = (
+            [] if self.calibration.state in (Calibration.SELECTING, Calibration.VALIDATING)
+            else normalized
+        )
+        for event in self.interactions.update(interaction_points, timestamp):
+            self._send_event(event, settings.get("Pointers", True))
 
         # 6. Send hand skeleton landmarks (HandTracker only, throttled to ~20 fps)
         if isinstance(self.tracker, HandTracker):
@@ -162,11 +229,100 @@ class LightTableCV:
                         pts = [{"x": round(pt.x, 4), "y": round(pt.y, 4)}
                                for pt in lm.landmark]
                         hands_out.append(pts)
-                    self.bridge.send({"type": "hand_skeleton", "hands": hands_out})
+                    self._send({"type": "hand_skeleton", "hands": hands_out})
                 else:
-                    self.bridge.send({"type": "hand_skeleton", "hands": []})
+                    self._send({"type": "hand_skeleton", "hands": []})
+
+        self._processing_times.append(time.perf_counter() - processing_started)
+        self.ui.update_calibration_status(
+            self.calibration.state, self.calibration.message,
+            self._cam_idx, self._current_res,
+        )
 
         return display
+
+    def _calibration_action(self, action):
+        if action == "start":
+            self.calibration.start()
+        elif action == "undo":
+            self.calibration.undo()
+        elif action == "reset":
+            self.calibration.reset()
+        elif action == "cancel":
+            self.calibration.cancel()
+        elif action == "save":
+            try:
+                self.calibration.save()
+            except (OSError, ValueError) as exc:
+                self.calibration.message = f"Could not save calibration: {exc}"
+        elif action == "load":
+            self.calibration.load_profile()
+        self.ui.update_calibration_status(
+            self.calibration.state, self.calibration.message,
+            self._cam_idx, self._current_res,
+        )
+
+    def _set_calibration_context(self, source_size, settings):
+        signature = Calibration.make_signature(
+            self._cam_idx, source_size, self._current_res, settings["Flip H"]
+        )
+        if signature != self.calibration.signature:
+            for event in self.interactions.close_all(time.monotonic()):
+                self._send_event(event, settings.get("Pointers", True))
+            self.calibration.set_context(signature)
+            self.tracking.reset()
+            self.ema.clear()
+            self.kalman.clear()
+            self.ui.update_calibration_status(
+                self.calibration.state, self.calibration.message,
+                self._cam_idx, self._current_res,
+            )
+
+    def _switch_tracker(self, index, pointers=True):
+        if not 0 <= index < len(TRACKER_CLASSES):
+            return False
+        try:
+            replacement = TRACKER_CLASSES[index]()
+        except Exception as exc:
+            print(f"[Tracker] Could not initialize {TRACKER_NAMES[index]}: {exc}")
+            self.ui.rebuild_for_tracker(self.tracker)
+            return False
+        for event in self.interactions.close_all(time.monotonic()):
+            self._send_event(event, pointers)
+        if hasattr(self.tracker, "close"):
+            self.tracker.close()
+        self.tracker = replacement
+        self._tracker_idx = index
+        self.ui.rebuild_for_tracker(self.tracker)
+        self._send({"type": "track_mode_change", "mode": self.tracker.name})
+        self.tracking.reset()
+        self.kalman.clear()
+        self.ema.clear()
+        self._tracker_error = None
+        return True
+
+    def _update_diagnostics(self):
+        capture_fps = 0.0
+        if len(self._capture_times) > 1:
+            elapsed = self._capture_times[-1] - self._capture_times[0]
+            if elapsed > 0:
+                capture_fps = (len(self._capture_times) - 1) / elapsed
+        processing_fps = (
+            1.0 / (sum(self._processing_times) / len(self._processing_times))
+            if self._processing_times and sum(self._processing_times) > 0 else 0.0
+        )
+        self.ui.update_diagnostics({
+            "camera": (
+                f"connected {self._cam_idx} {self._current_res[0]}x{self._current_res[1]}"
+                if self._camera_connected
+                else f"disconnected {self._cam_idx}"
+            ),
+            "capture_fps": capture_fps,
+            "processing_fps": processing_fps,
+            "detections": self._last_detection_count,
+            "tracker": self.tracker.name,
+            "udp": "sent (unconfirmed)" if self._last_udp_ok else "waiting" if self._last_udp_ok is None else "error",
+        })
 
     # ------------------------------------------------------------------
     # Camera helpers
@@ -174,20 +330,25 @@ class LightTableCV:
     def _open_cap(self, idx: int):
         """Open camera at idx and verify a frame can actually be read.
         Returns the cap if working, or a released cap object if not."""
-        cap = cv2.VideoCapture(idx)
+        try:
+            cap = cv2.VideoCapture(idx)
+        except cv2.error as exc:
+            print(f"[Camera] Could not initialize camera {idx}: {exc}")
+            return cv2.VideoCapture()
         if not cap.isOpened():
-            return cap
+            cap.release()
+            return cv2.VideoCapture()
         # MSMF on Windows sometimes reports isOpened()=True but fails to
         # deliver frames (e.g. camera held by another process / IR sensor).
         # Drain up to 5 frames with brief sleeps to confirm the stream works.
-        for _ in range(5):
+        for _ in range(3):
             ok, _ = cap.read()
             if ok:
                 self._cam_idx = idx
                 return cap
-            time.sleep(0.12)
+            time.sleep(0.05)
         cap.release()
-        return cv2.VideoCapture(-1)   # guaranteed not-opened
+        return cv2.VideoCapture()
 
     def _auto_open_cap(self):
         """Scan indices 0-9 and return the first camera that delivers frames."""
@@ -196,26 +357,29 @@ class LightTableCV:
             if cap.isOpened():
                 print(f"Camera {idx} opened successfully.")
                 return cap
-        return cv2.VideoCapture(-1)   # nothing found
+        return cv2.VideoCapture()
+
+    def _try_switch_camera(self, index):
+        candidate = self._open_cap(index)
+        if candidate.isOpened():
+            return candidate
+        candidate.release()
+        return None
 
     # ------------------------------------------------------------------
     # Main loop
     # ------------------------------------------------------------------
     def run(self):
         cap = self._auto_open_cap()
+        self._camera_connected = cap.isOpened()
         if not cap.isOpened():
-            print("WARNING: No camera found.  Running virtual simulation...")
-            self.run_virtual_sim()
-            return
+            print("WARNING: No camera found. Retrying while the control panel remains open.")
 
-        # Register calibration click handler on preview label
         def _on_click(x: int, y: int):
-            if len(self.calibration.points) < 4:
-                self.calibration.points.append([x, y])
-                print(f"[{len(self.calibration.points)}/4] Calibration point: ({x}, {y})")
-                if len(self.calibration.points) == 4:
-                    self.calibration.get_warp_matrix((1, 1))
-                    print("--- CALIBRATION COMPLETE ---")
+            if self.calibration.state == Calibration.SELECTING:
+                frame_size = self._current_res
+                self.calibration.add_point(x, y, frame_size)
+                print(f"[Calibration] {self.calibration.message}")
 
         self.ui.set_click_callback(_on_click)
 
@@ -229,36 +393,18 @@ class LightTableCV:
         print("  a          freeze & select object  (Object tracker only)")
         print("  x          clear tracked objects   (Object tracker only)\n")
 
-        _frame_deadline = time.time()
+        frame_deadline = time.monotonic()
+        next_camera_retry = time.monotonic()
+        next_selected_camera_retry = time.monotonic()
+        settings = self.ui.read()
 
-        while cap.isOpened() and self.ui.is_open():
-            ok, frame = cap.read()
-            if not ok:
-                break
-
+        while self.ui.is_open():
             settings = self.ui.read()
-
-            # ---- FPS cap ----
-            target_fps  = settings["Target FPS"]
-            frame_dur   = 1.0 / target_fps
-            now         = time.time()
-            sleep_for   = _frame_deadline - now
-            if sleep_for > 0:
-                time.sleep(sleep_for)
-            _frame_deadline = max(time.time(), _frame_deadline + frame_dur)
 
             # ---- Tracker switch ----
             new_tidx = settings["Tracker"]
             if new_tidx != self._tracker_idx:
-                self._tracker_idx = new_tidx
-                self.tracker = TRACKER_CLASSES[new_tidx]()
-                self.ui.rebuild_for_tracker(self.tracker)
-                self.bridge.send({
-                    "type": "track_mode_change",
-                    "mode": self.tracker.name
-                })
-                self.kalman.clear()
-                self.ema.clear()
+                self._switch_tracker(new_tidx, settings.get("Pointers", True))
 
             # ---- Keyboard shortcuts (1-6 for trackers) ----
             for k in self.ui._pending_keys:
@@ -269,16 +415,17 @@ class LightTableCV:
 
             # ---- Camera switch ----
             new_cidx = settings["Camera Idx"]
-            if new_cidx != self._cam_idx:
-                cap.release()
-                new_cap = self._open_cap(new_cidx)
-                if new_cap.isOpened():
+            if new_cidx != self._cam_idx and time.monotonic() >= next_selected_camera_retry:
+                new_cap = self._try_switch_camera(new_cidx)
+                if new_cap is not None:
+                    cap.release()
                     cap = new_cap
+                    self._camera_connected = True
                     self.tracker.reset()
+                    self.tracking.reset()
                 else:
-                    prev = self._cam_idx
-                    print(f"Camera {new_cidx} unavailable, staying on {prev}")
-                    cap = self._open_cap(prev)
+                    print(f"[Camera] Camera {new_cidx} unavailable; keeping camera {self._cam_idx}")
+                    next_selected_camera_retry = time.monotonic() + 2.0
 
             # ---- Resolution change ----
             # We resize in software after capture instead of asking the camera
@@ -291,24 +438,71 @@ class LightTableCV:
             # ---- Remote tracker change (phone web remote) ----
             remote_tidx = self._ctrl_state.pop_tracker_request()
             if remote_tidx is not None and remote_tidx != self._tracker_idx:
-                self._tracker_idx = remote_tidx
-                self.tracker = TRACKER_CLASSES[remote_tidx]()
-                self.ui.rebuild_for_tracker(self.tracker)
-                self.kalman.clear()
-                self.ema.clear()
+                self._switch_tracker(remote_tidx, settings.get("Pointers", True))
 
+            if not cap.isOpened():
+                now = time.monotonic()
+                if now >= next_camera_retry:
+                    replacement = self._open_cap(self._cam_idx)
+                    if replacement.isOpened():
+                        cap = replacement
+                        self._camera_connected = True
+                        self.tracker.reset()
+                        self.tracking.reset()
+                        print(f"[Camera] Camera {self._cam_idx} reconnected.")
+                    else:
+                        replacement.release()
+                    next_camera_retry = now + 2.0
+                self._ctrl_state.update_status(
+                    audio=0.0, tracker_idx=self._tracker_idx,
+                    detections=self._last_detection_count,
+                    camera="disconnected", calibration=self.calibration.state,
+                )
+                self._update_diagnostics()
+                keys = self.ui.tick()
+                if "esc" in keys or "q" in keys:
+                    break
+                time.sleep(0.05)
+                continue
+
+            ok, frame = cap.read()
+            if not ok:
+                print(f"[Camera] Lost frame from camera {self._cam_idx}; retrying.")
+                self._camera_connected = False
+                for event in self.interactions.close_all(time.monotonic()):
+                    self._send_event(event, settings.get("Pointers", True))
+                self.tracking.reset()
+                self.ema.clear()
+                self.kalman.clear()
+                cap.release()
+                cap = cv2.VideoCapture()
+                next_camera_retry = time.monotonic() + 0.25
+                continue
+            now = time.monotonic()
+            self._camera_connected = True
+            self._capture_times.append(now)
+            source_size = (frame.shape[1], frame.shape[0])
+            self._set_calibration_context(source_size, settings)
+            frame_duration = 1.0 / max(1, settings["Target FPS"])
+            sleep_for = frame_deadline - now
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+            frame_deadline = max(time.monotonic(), frame_deadline + frame_duration)
             frame   = self._adjust_frame(frame, settings)
-            display = self.process_frame(frame, settings)
+            display = self.process_frame(frame, settings, time.monotonic())
 
             # Update status for web remote
             self._ctrl_state.update_status(
                 audio       = 0.0,   # audio is Godot-side; CV doesn't measure it
                 tracker_idx = self._tracker_idx,
                 detections  = getattr(self, "_last_detection_count", 0),
+                camera=f"{self._cam_idx} {source_size[0]}x{source_size[1]}",
+                calibration=self.calibration.state,
             )
 
             # Push to unified Tkinter preview (no-op when hidden)
             self.ui.update_preview(display)
+            self._update_diagnostics()
 
             # Drive Tkinter event loop; collect keypresses
             keys = self.ui.tick()
@@ -316,7 +510,7 @@ class LightTableCV:
             if "esc" in keys or "q" in keys:
                 break
             if "c" in keys:
-                self.calibration.points = []
+                self.calibration.reset()
             if "a" in keys and isinstance(self.tracker, ObjectTracker):
                 ok2, freeze = cap.read()
                 if ok2:
@@ -330,6 +524,9 @@ class LightTableCV:
                 print("Object tracker cleared.")
 
         cap.release()
+        if hasattr(self.tracker, "close"):
+            self.tracker.close()
+        self.bridge.close()
         cv2.destroyAllWindows()
 
     # ------------------------------------------------------------------
@@ -341,11 +538,16 @@ class LightTableCV:
         try:
             while True:
                 t += 0.05
-                self.send_interaction(
-                    0,
-                    (0.5 + 0.3 * np.sin(t)) * 1920,
-                    (0.5 + 0.3 * np.cos(t)) * 1080,
-                )
+                self._send({
+                    "type": "interaction",
+                    "id": 0,
+                    "x": float(0.5 + 0.3 * np.sin(t)),
+                    "y": float(0.5 + 0.3 * np.cos(t)),
+                    "state": "move",
+                    "event": "move",
+                    "tracker": "Simulation",
+                    "timestamp": time.monotonic(),
+                })
                 time.sleep(0.016)
         except KeyboardInterrupt:
             pass
@@ -353,4 +555,3 @@ class LightTableCV:
 
 if __name__ == "__main__":
     LightTableCV().run()
-

@@ -1,7 +1,8 @@
 extends Node
 
-var peer : PacketPeerUDP
+var peer: PacketPeerUDP
 var port: int = 7000
+var _remote_host := ""
 
 signal interaction_received(id: int, pos: Vector2, state: String, metadata: Dictionary)
 signal remote_command(cmd: Dictionary)
@@ -12,28 +13,64 @@ func _ready():
 	peer = PacketPeerUDP.new()
 	var err = peer.bind(port)
 	if err != OK:
-		print("Network Receiver: Error binding on port ", port)
+		push_error("Network Receiver: Error binding on port %d (error %d)" % [port, err])
 	else:
 		print("Network Receiver: Listening on port ", port)
 
 func _process(_delta):
 	while peer.get_available_packet_count() > 0:
-		_parse_json_packet(peer.get_packet())
+		var packet = peer.get_packet()
+		var sender_ip = peer.get_packet_ip()
+		_parse_json_packet(packet, sender_ip)
 
-func _parse_json_packet(packet: PackedByteArray):
-	var json_string = packet.get_string_from_utf8()
+func _parse_json_packet(packet: PackedByteArray, sender_ip: String = ""):
+	if packet.size() > 65507:
+		push_warning("Network Receiver: Oversized UDP packet ignored")
+		return
 	var json = JSON.new()
-	var error = json.parse(json_string)
-	if error == OK:
-		var data = json.data
-		if data.has("type"):
-			if data["type"] == "interaction":
-				var pos = Vector2(data["x"], data["y"])
-				interaction_received.emit(int(data["id"]), pos, data["state"], data)
-			elif data["type"] == "command":
+	var error = json.parse(packet.get_string_from_utf8())
+	if error != OK:
+		push_warning("Network Receiver: Invalid JSON packet ignored")
+		return
+	if typeof(json.data) != TYPE_DICTIONARY:
+		push_warning("Network Receiver: Invalid JSON packet ignored")
+		return
+	var data: Dictionary = json.data
+	var packet_type = data.get("type", "")
+	match packet_type:
+		"interaction":
+			if not data.has("id") or not data.has("x") or not data.has("y"):
+				return
+			var id_value = data.get("id")
+			var x_value = data.get("x")
+			var y_value = data.get("y")
+			if typeof(id_value) != TYPE_INT:
+				return
+			var invalid_x = typeof(x_value) != TYPE_INT and typeof(x_value) != TYPE_FLOAT
+			var invalid_y = typeof(y_value) != TYPE_INT and typeof(y_value) != TYPE_FLOAT
+			if invalid_x or invalid_y:
+				return
+			if x_value < 0.0 or x_value > 1.0 or y_value < 0.0 or y_value > 1.0:
+				return
+			var pos = Vector2(float(x_value), float(y_value))
+			interaction_received.emit(id_value, pos, str(data.get("event", data.get("state", "move"))), data)
+		"command":
+			if typeof(data.get("cmd", "")) == TYPE_STRING:
+				_remote_host = sender_ip
 				remote_command.emit(data)
-			elif data["type"] == "hand_skeleton":
-				hand_skeleton_received.emit(data["hands"])
-			elif data["type"] == "track_mode_change":
-				track_mode_changed.emit(data["mode"])
+		"hand_skeleton":
+			if typeof(data.get("hands", [])) == TYPE_ARRAY:
+				hand_skeleton_received.emit(data.get("hands", []))
+		"track_mode_change":
+			if typeof(data.get("mode", "")) == TYPE_STRING:
+				track_mode_changed.emit(data.mode)
 
+func send_status(scene_name: String, request_id: String = ""):
+	if _remote_host.is_empty() or not peer.is_bound():
+		return
+	if peer.set_dest_address(_remote_host, 7001) != OK:
+		return
+	var status := {"type": "godot_status", "scene": scene_name}
+	if not request_id.is_empty():
+		status["request_id"] = request_id
+	peer.put_packet(JSON.stringify(status).to_utf8_buffer())
