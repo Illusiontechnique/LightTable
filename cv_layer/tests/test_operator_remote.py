@@ -53,6 +53,46 @@ class OperatorTests(unittest.TestCase):
         self.assertEqual(client.get("/operator/presets").status_code, 401)
         self.assertEqual(client.post("/operator/object", json={"action": "clear"}).status_code, 401)
 
+    def test_operator_navigation_and_preview_are_grouped_under_settings(self):
+        html = self.client.get("/").get_data(as_text=True)
+        main_nav = html.split('<nav class="tabs" aria-label="Main navigation">', 1)[1].split("</nav>", 1)[0]
+        settings_nav = html.split('<nav id="settingsNav"', 1)[1].split("</nav>", 1)[0]
+        tracking = html.split('<section id="page-tracking"', 1)[1].split("</section>", 1)[0]
+        diagnostics = html.split('<section id="page-diagnostics"', 1)[1].split("</section>", 1)[0]
+        self.assertIn("Play", main_nav)
+        self.assertIn("Settings", main_nav)
+        for section in ("Tracking", "Calibration", "Diagnostics", "Preferences"):
+            self.assertIn(section, settings_nav)
+        self.assertIn('id="trackerSelect"', tracking)
+        self.assertIn('id="trackerControls"', tracking)
+        self.assertIn('id="trackingPreview"', tracking)
+        self.assertNotIn("<img", diagnostics)
+        self.assertIn('id="micStatus"', diagnostics)
+
+    def test_tracker_selector_queues_shared_setting(self):
+        response = self.client.post("/operator/settings", json={
+            "settings": {"tracker": "Hands"}, "tracker_settings": {}, "tracker_name": "Edge / Canny",
+        })
+        self.assertEqual(response.status_code, 200)
+        command = self.state.pop_operator_commands()[0]
+        self.assertEqual(command["settings"], {"tracker": "Hands"})
+        self.assertEqual(command["tracker_settings"], {})
+
+    def test_operator_serializes_compatible_calibration_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            calibration = Calibration(Path(directory) / "calibration.json")
+            calibration.set_context(self.signature)
+            calibration.start()
+            for point in [(20, 20), (300, 20), (300, 220), (20, 220)]:
+                calibration.add_point(*point, frame_size=(320, 240))
+            calibration.save()
+            self.snapshot["calibration"]["profiles"] = calibration.list_profiles()
+            self.state.publish_operator(self.snapshot)
+
+            response = self.client.get("/operator")
+            self.assertEqual(response.status_code, 200)
+            self.assertIs(response.get_json()["calibration"]["profiles"][0]["compatible"], True)
+
     def test_object_region_requires_current_camera_and_tracker(self):
         self.assertEqual(self.client.post("/operator/object", json={"action": "clear"}).status_code, 409)
         self.snapshot["tracker_name"] = "Object Tracking (CSRT)"

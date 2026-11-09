@@ -253,7 +253,8 @@ class Calibration:
             # Saved matrix must still map its stored corners to the configured target.
             mapped = cv2.perspectiveTransform(np.float32(points).reshape(1, 4, 2), matrix)[0]
             target = cv2.perspectiveTransform(np.float32(points).reshape(1, 4, 2), expected)[0]
-            return np.isfinite(mapped).all() and np.max(np.abs(mapped - target)) <= max(self.target_size) * 1e-3
+            return bool(np.isfinite(mapped).all() and
+                        np.max(np.abs(mapped - target)) <= max(self.target_size) * 1e-3)
         except (KeyError, TypeError, ValueError, cv2.error):
             return False
 

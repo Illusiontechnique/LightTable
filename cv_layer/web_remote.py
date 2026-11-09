@@ -449,10 +449,14 @@ input[type=range]{flex:1;accent-color:#32cee8;height:22px;cursor:pointer}
 .tabs{display:flex;gap:.3rem;overflow:auto;padding:.6rem;position:sticky;top:3.3rem;background:#06080d;z-index:10}
 .tabs button,.opbutton{background:#0d1c26;border:1px solid #1c3848;color:#a8c0c8;border-radius:8px;padding:.6rem;cursor:pointer}
 .tabs button.active{border-color:#32cee8;color:#32cee8}
+.settings-tabs{position:static;padding-top:0}
+.settings-tabs[hidden]{display:none}
+.settings-tabs button{white-space:nowrap}
 .operator-page[hidden]{display:none}
 .oprow{display:flex;align-items:center;gap:.6rem;margin:.5rem 0}
 .oprow label{min-width:110px;font-size:.8rem}
 .oprow output{min-width:3rem;text-align:right}
+.op-hint{font-size:.8rem;line-height:1.5;color:#7897a4;margin:.5rem 0}
 .preview{display:block;width:100%;height:auto;max-width:640px;background:#111;touch-action:manipulation}
 .meter{width:100%;height:1rem}
 .meter-wrap{position:relative}
@@ -476,12 +480,15 @@ input[type=range]{flex:1;accent-color:#32cee8;height:22px;cursor:pointer}
   </div>
 </div>
 
-<nav class="tabs">
-  <button class="active" onclick="showPage('play',this)">Play</button>
-  <button onclick="showPage('tracking',this)">Tracking</button>
-  <button onclick="showPage('calibration',this)">Calibration</button>
-  <button onclick="showPage('diagnostics',this)">Diagnostics</button>
-  <button onclick="showPage('settings',this)">Settings</button>
+<nav class="tabs" aria-label="Main navigation">
+  <button id="nav-play" class="active" onclick="showPage('play')">Play</button>
+  <button id="nav-settings" onclick="showPage('settings')" aria-label="Settings">&#9881; Settings</button>
+</nav>
+<nav id="settingsNav" class="tabs settings-tabs" aria-label="Settings sections" hidden>
+  <button data-page="tracking" onclick="showPage('tracking')">Tracking</button>
+  <button data-page="calibration" onclick="showPage('calibration')">Calibration</button>
+  <button data-page="diagnostics" onclick="showPage('diagnostics')">Diagnostics</button>
+  <button data-page="settings" onclick="showPage('settings')">Preferences</button>
 </nav>
 <div id="operatorError" class="op-error" role="status"></div>
 <section id="page-play" class="operator-page">
@@ -501,7 +508,25 @@ input[type=range]{flex:1;accent-color:#32cee8;height:22px;cursor:pointer}
 <section id="page-tracking" class="operator-page" hidden>
 <div class="sec">Tracking</div>
 <div class="ctrl-card">
+  <div class="oprow"><label for="trackerSelect">Tracking method</label>
+    <select id="trackerSelect" onchange="chooseTracker(this.value)"></select></div>
+  <div id="trackerStatus" class="op-hint">Waiting for tracker status</div>
+  <div id="trackerControls"></div>
+</div>
+<div class="sec">Camera and processing</div>
+<div class="ctrl-card">
   <div id="trackingControls"></div>
+</div>
+<div class="sec">Live preview</div>
+<div class="ctrl-card">
+  <label>Preview <select id="previewMode"><option value="camera">Adjusted camera</option><option value="overlay">Tracking overlay</option><option value="motion">Motion intensity</option></select></label>
+  <label>Refresh <select id="previewRate"><option value="200">5 fps</option><option value="500">2 fps</option><option value="1000">1 fps</option></select></label>
+  <img id="trackingPreview" class="preview" alt="Tracking camera preview">
+  <div id="objectControls" hidden>
+    <p>Object tracker: select the top-left and bottom-right corners on the adjusted camera preview.</p>
+    <button class="opbutton" onclick="beginObjectSelection()">Select object</button>
+    <button class="opbutton" onclick="postJson('/operator/object',{action:'clear'})">Clear objects</button>
+  </div>
 </div>
 </section>
 
@@ -516,16 +541,8 @@ input[type=range]{flex:1;accent-color:#32cee8;height:22px;cursor:pointer}
 </section>
 <section id="page-diagnostics" class="operator-page" hidden>
 <div class="ctrl-card">
-  <label>Preview <select id="previewMode"><option value="camera">Adjusted camera</option><option value="overlay">Tracking overlay</option><option value="motion">Motion intensity</option></select></label>
-  <label>Refresh <select id="previewRate"><option value="200">5 fps</option><option value="500">2 fps</option><option value="1000">1 fps</option></select></label>
-  <img id="diagnosticPreview" class="preview" alt="Camera preview">
   <div id="diagnosticsText"></div>
   <div id="diagnosticsDetail"></div>
-  <div id="objectControls" hidden>
-    <p>Object tracker: select the top-left and bottom-right corners on the adjusted camera preview.</p>
-    <button class="opbutton" onclick="beginObjectSelection()">Select object</button>
-    <button class="opbutton" onclick="postJson('/operator/object',{action:'clear'})">Clear objects</button>
-  </div>
 </div>
 <div class="sec">Microphone</div>
 <div class="ctrl-card">
@@ -628,12 +645,6 @@ function hilite(scene){
   document.querySelectorAll('.sb').forEach(b=>b.classList.toggle('active',b.dataset.scene===scene));
 }
 
-// ── Tracker ──────────────────────────────────────────────────────────────────
-async function setTracker(v){
-  await fetch('/tracker',{method:'POST',headers:{'Content-Type':'application/json'},
-                           body:JSON.stringify({tracker_idx:parseInt(v)})});
-}
-
 // ── Audio sliders ────────────────────────────────────────────────────────────
 function sliderMoved(){
   clearTimeout(audioTimer); audioEditingUntil=Date.now()+600;
@@ -684,13 +695,18 @@ async function poll(){
   }catch(e){document.getElementById('conn').className='conn';}
 }
 let page='play', operatorData=null, previewTimer=null, previewGeneration=0, settingTimers={}, audioPollBusy=false, objectCorner=null, selectingObject=false;
-function showPage(name,button){
+let pendingTracker=null, trackerRequestTime=0, renderedTracker=null;
+function showPage(name){
   page=name;
   document.querySelectorAll('.operator-page').forEach(el=>el.hidden=el.id!=='page-'+name);
-  document.querySelectorAll('.tabs button').forEach(el=>el.classList.toggle('active',el===button));
+  document.getElementById('nav-play').classList.toggle('active',name==='play');
+  document.getElementById('nav-settings').classList.toggle('active',name!=='play');
+  document.getElementById('settingsNav').hidden=name==='play';
+  document.querySelectorAll('#settingsNav button').forEach(el=>el.classList.toggle('active',el.dataset.page===name));
   previewGeneration++;
   clearTimeout(previewTimer);
-  if(name==='diagnostics'||name==='calibration') updatePreview();
+  if(name!=='tracking'){selectingObject=false;objectCorner=null}
+  if(name==='tracking'||name==='calibration') updatePreview();
   if(name==='settings') refreshPresets();
   refreshOperator();
 }
@@ -704,20 +720,22 @@ async function postJson(url,data){
   }catch(e){document.getElementById('operatorError').textContent=e.message; return null}
 }
 async function updatePreview(){
-  if(document.hidden||!(page==='diagnostics'||page==='calibration')) return;
+  if(document.hidden||!(page==='tracking'||page==='calibration')) return;
   const generation=previewGeneration;
   const mode=page==='calibration'?'overlay':document.getElementById('previewMode').value;
-  const image=document.getElementById(page==='calibration'?'calPreview':'diagnosticPreview');
+  const image=document.getElementById(page==='calibration'?'calPreview':'trackingPreview');
   try{
     const response=await fetch('/preview/'+mode,{cache:'no-store'});
     if(response.ok){
-      const blob=await response.blob(), old=image.dataset.url;
+      const blob=await response.blob();
+      if(generation!==previewGeneration)return;
+      const old=image.dataset.url;
       const url=URL.createObjectURL(blob); image.src=url; image.dataset.url=url;
       image.dataset.context=response.headers.get('X-LightTable-Context')||'';
       if(old) URL.revokeObjectURL(old);
-    }else image.removeAttribute('src');
-  }catch(e){image.removeAttribute('src')}
-  if(generation===previewGeneration&&(page==='diagnostics'||page==='calibration'))
+    }else if(generation===previewGeneration)image.removeAttribute('src');
+  }catch(e){if(generation===previewGeneration)image.removeAttribute('src')}
+  if(generation===previewGeneration&&(page==='tracking'||page==='calibration'))
     previewTimer=setTimeout(updatePreview,Number(document.getElementById('previewRate').value));
 }
 document.addEventListener('visibilitychange',()=>{
@@ -750,16 +768,51 @@ function makeControl(name,spec,isTracker){
   };
   row.appendChild(input);row.appendChild(out);return row;
 }
+async function chooseTracker(value){
+  if(!operatorData)return;
+  pendingTracker=value; trackerRequestTime=Date.now();
+  document.getElementById('trackerSelect').disabled=true;
+  document.getElementById('trackerStatus').textContent='Switching to '+value+'…';
+  document.getElementById('trackerControls').replaceChildren();
+  renderedTracker=null;
+  const result=await postJson('/operator/settings',{settings:{tracker:value},tracker_settings:{},tracker_name:operatorData.tracker_name});
+  if(!result)pendingTracker=null;
+  refreshOperator();
+}
 async function refreshOperator(){
   try{
-    const response=await fetch('/operator',{cache:'no-store'}); if(!response.ok)return;
+    const response=await fetch('/operator',{cache:'no-store'}); if(!response.ok)throw new Error('Operator status unavailable');
     operatorData=await response.json();
     document.getElementById('objectControls').hidden=operatorData.tracker_name!=='Object Tracking (CSRT)';
     if(operatorData.message)document.getElementById('operatorError').textContent=operatorData.message;
+    if(page==='tracking'){
+      const spec=operatorData.settings.tracker, select=document.getElementById('trackerSelect');
+      if(!select.options.length)spec.options.forEach(value=>{const option=document.createElement('option');option.value=value;option.textContent=value;select.appendChild(option)});
+      if(pendingTracker && ((spec.value===pendingTracker && operatorData.tracker_ready) ||
+          (operatorData.message||'').startsWith('Could not initialize ') || Date.now()-trackerRequestTime>5000)){
+        if(spec.value!==pendingTracker || !operatorData.tracker_ready)
+          document.getElementById('operatorError').textContent=(operatorData.message||'').startsWith('Could not initialize ')
+            ? operatorData.message : 'Tracker switch timed out';
+        pendingTracker=null;
+      }
+      select.disabled=!!pendingTracker;
+      select.value=pendingTracker||spec.value;
+      const trackerControls=document.getElementById('trackerControls');
+      const ready=!pendingTracker && operatorData.tracker_ready;
+      document.getElementById('trackerStatus').textContent=ready
+        ? operatorData.tracker_name+' settings' : 'Switching tracker…';
+      if(ready && (renderedTracker!==operatorData.tracker_name ||
+          !trackerControls.querySelector('input:focus, select:focus'))){
+        trackerControls.replaceChildren();
+        const entries=Object.entries(operatorData.tracker_settings);
+        entries.forEach(([name,control])=>trackerControls.appendChild(makeControl(name,control,true)));
+        if(!entries.length)trackerControls.textContent='No additional settings for this tracker.';
+        renderedTracker=operatorData.tracker_name;
+      }else if(!ready){trackerControls.replaceChildren();renderedTracker=null}
+    }
     if(page==='tracking'&&!document.querySelector('#trackingControls input:focus, #trackingControls select:focus')){
       const container=document.getElementById('trackingControls');container.replaceChildren();
-      for(const [name,spec] of Object.entries(operatorData.settings))container.appendChild(makeControl(name,spec,false));
-      for(const [name,spec] of Object.entries(operatorData.tracker_settings))container.appendChild(makeControl(name,spec,true));
+      for(const [name,spec] of Object.entries(operatorData.settings))if(name!=='tracker')container.appendChild(makeControl(name,spec,false));
     }
     const cal=operatorData.calibration;
     document.getElementById('calStatus').textContent=cal.state+': '+cal.message+' · '+
@@ -811,7 +864,7 @@ function beginObjectSelection(){
   objectCorner=null; selectingObject=true;
   document.getElementById('operatorError').textContent='Tap top-left then bottom-right of the object.';
 }
-document.getElementById('diagnosticPreview').addEventListener('click',event=>{
+document.getElementById('trackingPreview').addEventListener('click',event=>{
   if(!selectingObject)return;
   const rect=event.currentTarget.getBoundingClientRect();
   const point={x:(event.clientX-rect.left)/rect.width,y:(event.clientY-rect.top)/rect.height};
