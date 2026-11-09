@@ -21,6 +21,22 @@ LightTable is a portable interactive projection system. The Python/OpenCV layer 
 
 OpenCV camera capture can fail temporarily without terminating the control panel; it retries the selected camera. The virtual interaction simulator can be run separately with `python cv_layer/simulate_hands.py`; it does not require a physical camera.
 
+## Godot keyboard shortcuts
+
+With the Godot window focused, press **Space** to show or hide the shortcut list.
+
+| Key | Action |
+| --- | --- |
+| T | Toggle pointers |
+| Y | Toggle hand skeleton |
+| Left / Right | Previous / next scene |
+| Up / Down | Increase / decrease quality |
+| Tab | Toggle dashboard |
+| C | Toggle console |
+| Esc | Quit Godot |
+
+In the interactive menu, hold a pointer over a card for 2.2 seconds to select it.
+
 ## Calibration
 
 Use the **Calibration** section in the desktop panel:
@@ -36,7 +52,7 @@ Only a profile matching the current camera configuration is applied. Existing ma
 
 All six existing modes remain selectable: MediaPipe Hands, Blob, Motion, Color, Edge, and Object. Tracker outputs are associated by proximity into stable runtime IDs; timestamped histories expire after temporary loss, and smoothing is applied after identity association. EMA is initialized at the first measurement; Kalman transition timing uses elapsed time.
 
-For MediaPipe Hands, use **Target Mode** in the CV panel: `0` follows the palm, `1` follows the palm and switches to the index fingertip after a pointing pose is stable for three frames, `2` always follows the index fingertip, and `3` uses all five fingertips as separate scene pointers. Start with `2` to compare with mouse simulation; use `3` for multi-finger scenes. Five pointers per hand can activate multiple things at once and may be less stable when hands overlap. The preview marks selected targets with green crosses. The Godot hand skeleton and landmark dots are shown by default; press `H` to toggle them. These landmarks do not establish physical surface contact.
+For MediaPipe Hands, use **Target Mode** in the CV panel: `0` follows the palm, `1` follows the palm and switches to the index fingertip after a pointing pose is stable for three frames, `2` always follows the index fingertip, and `3` uses all five fingertips as separate scene pointers. Start with `2` to compare with mouse simulation; use `3` for multi-finger scenes. Five pointers per hand can activate multiple things at once and may be less stable when hands overlap. The preview marks selected targets with green crosses. The Godot hand skeleton and landmark dots are shown by default; press `Y` to toggle them. These landmarks do not establish physical surface contact.
 
 Mouse simulation and camera points use the same scene interaction path. Turn off **Mouse Simulation** in Godot when testing the camera so the mouse does not leave an extra pointer. Calibrate for accurate positioning. The water scene is deliberately different: it responds only to frame-difference motion, not hand points or the simulated mouse.
 

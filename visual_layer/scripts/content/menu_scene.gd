@@ -14,7 +14,7 @@ extends Node2D
 #    3. Selecting a scene card calls main.load_content_scene() and exits.
 # ─────────────────────────────────────────────────────────────────────────────
 
-const HOLD_TIME   : float = 1.2   # seconds to fill the arc and trigger select
+const HOLD_TIME   : float = 2.2   # seconds to fill the arc and trigger select
 const DECAY_RATE  : float = 3.0   # how fast hold resets when hand leaves
 const GAP         : float = 28.0  # pixel gap between cards
 const CARD_CORNER : int   = 22    # border-radius on each card

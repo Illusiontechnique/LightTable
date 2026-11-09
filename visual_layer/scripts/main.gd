@@ -39,6 +39,7 @@ var audio_ceiling_slider: HSlider
 var console_toggle_button: Button
 var console_visible := true
 var active_scene_label := "Not confirmed"
+var shortcuts_panel: PanelContainer
 const SIMULATION_ID := -1
 const INTERACTION_TIMEOUT := 1.0
 var _interaction_seen: Dictionary = {}
@@ -75,6 +76,7 @@ func _ready():
 	_setup_cursor_draw_layer()
 	_setup_world_environment()
 	_setup_quality_hud()
+	_setup_shortcuts_panel()
 
 	# Dev Dashboard toggle
 	dev_dashboard.visible = true # Start with dashboard for dev
@@ -674,6 +676,34 @@ func log_message(msg: String):
 	log_text.append_text("\n[color=gray]" + Time.get_time_string_from_system() + "[/color] " + msg)
 	LTLog.info(msg)
 
+func _setup_shortcuts_panel() -> void:
+	shortcuts_panel = PanelContainer.new()
+	shortcuts_panel.name = "ShortcutsPanel"
+	shortcuts_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	shortcuts_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	shortcuts_panel.offset_left = -440
+	shortcuts_panel.offset_right = -20
+	shortcuts_panel.offset_top = 20
+	shortcuts_panel.offset_bottom = 300
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.03, 0.05, 0.08, 0.94)
+	style.content_margin_left = 20
+	style.content_margin_right = 20
+	style.content_margin_top = 16
+	style.content_margin_bottom = 16
+	style.corner_radius_top_left = 12
+	style.corner_radius_top_right = 12
+	style.corner_radius_bottom_left = 12
+	style.corner_radius_bottom_right = 12
+	shortcuts_panel.add_theme_stylebox_override("panel", style)
+	var label := Label.new()
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.add_theme_font_size_override("font_size", 20)
+	label.text = "KEYBOARD SHORTCUTS\n\nSpace  Show / hide this list\nT  Show / hide pointers\nY  Show / hide hand skeleton\nLeft / Right  Previous / next scene\nUp / Down  Increase / decrease quality\nTab  Show / hide dashboard\nC  Show / hide console\nEsc  Quit"
+	shortcuts_panel.add_child(label)
+	shortcuts_panel.visible = false
+	$UI.add_child(shortcuts_panel)
+
 func _input(event):
 	if event.is_action_pressed("ui_cancel"): # ESC key
 		get_tree().quit()
@@ -685,12 +715,16 @@ func _input(event):
 		if cursor_draw_layer:
 			cursor_draw_layer.show_cursors = !cursor_draw_layer.show_cursors
 
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_SPACE:
+		shortcuts_panel.visible = !shortcuts_panel.visible
+		get_viewport().set_input_as_handled()
+
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_UP:
 		LTQuality.step_up()
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_DOWN:
 		LTQuality.step_down()
 
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_Y:
 		if hand_skeleton_overlay:
 			hand_skeleton_overlay.show_skeleton = !hand_skeleton_overlay.show_skeleton
 			hand_skeleton_overlay.queue_redraw()

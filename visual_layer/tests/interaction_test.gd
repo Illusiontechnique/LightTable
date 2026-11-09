@@ -12,10 +12,41 @@ func _check(condition: bool, message: String) -> bool:
 	return condition
 
 
+func _press_key(app: Node, key: Key, echo: bool = false) -> void:
+	var event := InputEventKey.new()
+	event.keycode = key
+	event.pressed = true
+	event.echo = echo
+	app._input(event)
+
+
 func _run() -> void:
 	var app = load("res://scenes/main.tscn").instantiate()
 	root.add_child(app)
 	await process_frame
+	if not _check(not app.shortcuts_panel.visible, "Shortcut list must start hidden"):
+		return
+	_press_key(app, KEY_SPACE)
+	if not _check(app.shortcuts_panel.visible, "Space must show shortcuts"):
+		return
+	_press_key(app, KEY_SPACE, true)
+	if not _check(app.shortcuts_panel.visible, "Key repeat must not toggle shortcuts"):
+		return
+	_press_key(app, KEY_SPACE)
+	if not _check(not app.shortcuts_panel.visible, "Space must hide shortcuts"):
+		return
+	var skeleton_visible: bool = app.hand_skeleton_overlay.show_skeleton
+	_press_key(app, KEY_Y)
+	if not _check(app.hand_skeleton_overlay.show_skeleton != skeleton_visible, "Y must toggle skeleton"):
+		return
+	_press_key(app, KEY_Y)
+	if not _check(app.hand_skeleton_overlay.show_skeleton == skeleton_visible, "Y must toggle skeleton back"):
+		return
+	var pointers_visible: bool = app.cursor_draw_layer.show_cursors
+	_press_key(app, KEY_T)
+	if not _check(app.cursor_draw_layer.show_cursors != pointers_visible, "T must toggle pointers"):
+		return
+	_press_key(app, KEY_T)
 	var receiver = app.get_node("NetworkReceiver")
 	var interactions = app.get_node("Interactions")
 	receiver._parse_json_packet(JSON.stringify({
@@ -61,6 +92,13 @@ func _run() -> void:
 	menu._process(0.1)
 	if not _check(mouse_hold > 0.0 and is_equal_approx(menu._card_holds[0], mouse_hold),
 			"Camera and mouse must activate the same menu card"):
+		return
+	menu._card_holds[0] = 0.0
+	menu._process(2.19)
+	if not _check(not menu._nav_lock, "Menu must not select before 2.2 seconds"):
+		return
+	menu._process(0.02)
+	if not _check(menu._nav_lock, "Menu must select after 2.2 seconds"):
 		return
 
 	if not _check(app.load_content_scene("res://scripts/content/water_scene.gd"), "Water failed to load"):
