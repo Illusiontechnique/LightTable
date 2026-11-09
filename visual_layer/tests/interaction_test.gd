@@ -18,6 +18,11 @@ func _run() -> void:
 	await process_frame
 	var receiver = app.get_node("NetworkReceiver")
 	var interactions = app.get_node("Interactions")
+	receiver._parse_json_packet(JSON.stringify({
+		"type": "interaction", "id": 1.5, "x": 0.3, "y": 0.4
+	}).to_utf8_buffer())
+	if not _check(interactions.get_child_count() == 0, "Fractional interaction IDs must be rejected"):
+		return
 	var packet := {
 		"type": "interaction", "id": 99, "x": 0.3, "y": 0.4,
 		"state": "enter", "tracker": "MediaPipe Hands"
@@ -40,6 +45,23 @@ func _run() -> void:
 	app._process(0.016)
 	if not _check(not interactions.has_node("99"), "Stale camera input must expire"):
 		return
+	app._on_interaction_received(app.SIMULATION_ID, Vector2.ZERO, "exit")
+	if not _check(app.load_content_scene("res://scripts/content/menu_scene.gd"), "Menu failed to load"):
+		return
+	var menu = app.active_scene
+	var menu_pos: Vector2 = menu._card_rects[0].get_center() / app.get_viewport_rect().size
+	app._on_interaction_received(app.SIMULATION_ID, menu_pos, "move")
+	menu._process(0.1)
+	var mouse_hold: float = menu._card_holds[0]
+	app._on_interaction_received(app.SIMULATION_ID, Vector2.ZERO, "exit")
+	menu._card_holds[0] = 0.0
+	packet["x"] = menu_pos.x
+	packet["y"] = menu_pos.y
+	receiver._parse_json_packet(JSON.stringify(packet).to_utf8_buffer())
+	menu._process(0.1)
+	if not _check(mouse_hold > 0.0 and is_equal_approx(menu._card_holds[0], mouse_hold),
+			"Camera and mouse must activate the same menu card"):
+		return
 
 	if not _check(app.load_content_scene("res://scripts/content/water_scene.gd"), "Water failed to load"):
 		return
@@ -49,6 +71,12 @@ func _run() -> void:
 		"points": [{"x": 0.25, "y": 0.5}, {"x": 0.75, "y": 0.5}]
 	}).to_utf8_buffer())
 	if not _check(water.active_ripples.size() == 2, "Frame-motion points must create water ripples"):
+		return
+	receiver._parse_json_packet(JSON.stringify({
+		"type": "frame_motion", "amount": 0.2,
+		"points": [{"x": 0.25, "y": 0.5}, {"x": 0.75, "y": 0.5}]
+	}).to_utf8_buffer())
+	if not _check(water.active_ripples.size() == 2, "Ripple rate limit must preserve existing waves"):
 		return
 	app._on_interaction_received(1, Vector2(0.5, 0.5), "move")
 	water._process(0.016)
@@ -63,6 +91,8 @@ func _run() -> void:
 		return
 	app._process(0.016)
 	if not _check(is_equal_approx(app.active_scene.motion_amount, 0.2), "Spinner must receive motion amount"):
+		return
+	if not _check(app.active_scene.spinners.has(-1), "Motion alone must create a spinner"):
 		return
 	print("Interaction and frame-motion integration checks passed")
 	app.queue_free()

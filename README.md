@@ -36,7 +36,11 @@ Only a profile matching the current camera configuration is applied. Existing ma
 
 All six existing modes remain selectable: MediaPipe Hands, Blob, Motion, Color, Edge, and Object. Tracker outputs are associated by proximity into stable runtime IDs; timestamped histories expire after temporary loss, and smoothing is applied after identity association. EMA is initialized at the first measurement; Kalman transition timing uses elapsed time.
 
-For MediaPipe Hands, use the **Target Mode** control in the CV preview settings: `0` follows the palm, `1` follows the palm and switches to the index fingertip after an isolated-index pointing pose is stable for three frames, and `2` always follows the index fingertip. The preview marks the palm in orange, the index tip in yellow, and the active target with a green cross. The Godot hand skeleton and landmark dots are shown by default; press `H` to toggle them. These landmarks indicate tracked geometry, not physical surface contact.
+For MediaPipe Hands, use **Target Mode** in the CV panel: `0` follows the palm, `1` follows the palm and switches to the index fingertip after a pointing pose is stable for three frames, `2` always follows the index fingertip, and `3` uses all five fingertips as separate scene pointers. Start with `2` to compare with mouse simulation; use `3` for multi-finger scenes. Five pointers per hand can activate multiple things at once and may be less stable when hands overlap. The preview marks selected targets with green crosses. The Godot hand skeleton and landmark dots are shown by default; press `H` to toggle them. These landmarks do not establish physical surface contact.
+
+Mouse simulation and camera points use the same scene interaction path. Turn off **Mouse Simulation** in Godot when testing the camera so the mouse does not leave an extra pointer. Calibrate for accurate positioning. The water scene is deliberately different: it responds only to frame-difference motion, not hand points or the simulated mouse.
+
+**Frame Motion** runs independently of the selected tracker. It compares successive downscaled camera frames, measures the fraction of changed pixels, and sends up to eight sampled motion-boundary points. Water uses these points to spawn a bounded number of ripples; the spinner can use overall motion energy even without a hand pointer. In the CV panel, enable/disable frame differencing, raise **Threshold** to reject small brightness changes, and raise **Min area %** to reject small moving regions. When calibrated, analysis is restricted to the calibrated surface. Changing projector imagery, lighting, or camera movement can still produce false motion; tune the controls for the installation.
 
 Each interaction datagram retains the existing envelope and `state` field and adds an `event` alias. Velocity and direction are optional:
 
@@ -59,6 +63,8 @@ Coordinates are normalized to `[0, 1]`; `timestamp` is monotonic process time. L
 
 The web remote scene display uses Godot acknowledgements/status packets rather than treating a sent UDP request as proof that a scene loaded. Godot status returns over UDP port 7001; the receiver continues to accept interaction/control packets on port 7000.
 
+The additional `frame_motion` datagram has `amount` (changed-pixel fraction from 0 to 1) and `points` (up to eight normalized `{"x", "y"}` boundary samples). Scenes may implement `on_frame_motion(amount, points)` and/or `set_motion_amount(amount)`; the latter returns to zero if updates stop. This is visual change, not a contact or gesture event.
+
 ## Tests
 
 Run the camera-independent Python suite from the `cv_layer` directory:
@@ -68,5 +74,7 @@ python -m unittest discover -s tests -v
 ```
 
 Tests cover calibration geometry/transforms/profile compatibility/recovery, tracking identity and expiration, interaction lifecycle, remote config and control validation, player selection, scene confirmation, and mockable camera switching. Camera/projector alignment, real camera disconnect/reconnect, MediaPipe performance, and Godot rendering still require hardware or a running Godot instance for end-to-end validation.
+
+To exercise Godot's interaction receiver, simulation parity, water, and spinner without hardware, run `godot --headless --path visual_layer --script res://tests/interaction_test.gd` (use the Godot console executable on Windows).
 
 For Python dependency and remote settings details, see [CONFIGURATION.md](./CONFIGURATION.md).

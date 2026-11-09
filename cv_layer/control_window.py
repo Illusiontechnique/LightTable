@@ -385,10 +385,8 @@ class ControlWindow:
 
         # Update tracker dropdown to match (if switched programmatically)
         if hasattr(tracker, "name"):
-            short = tracker.name.split()[0] if " " in tracker.name else tracker.name
-            # Find matching entry
             for tn in TRACKER_NAMES:
-                if short.lower() in tn.lower() or tn.lower() in short.lower():
+                if tn.lower() in tracker.name.lower():
                     self._tracker_var.set(tn)
                     break
 

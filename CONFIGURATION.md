@@ -6,6 +6,8 @@
 
 The processing resolution is a software resize after capture. The camera's reported source resolution is tracked separately and is part of calibration compatibility.
 
+Frame differencing is controlled by `motion_enabled` (default `true`), `motion_threshold` (1–100, default 25), and `motion_min_percent` (0–20, default 1). These can also be changed in the **Frame Motion** section of the desktop panel. Higher thresholds reject weaker pixel changes; higher minimum percentages reject smaller changed regions. Changes in projected content or room lighting may be detected as motion. The signal runs alongside the selected tracker and is separate from the Motion tracker.
+
 ## Calibration profiles
 
 Profiles are stored in `cv_layer/calibration.json`. Version 2 uses this shape:

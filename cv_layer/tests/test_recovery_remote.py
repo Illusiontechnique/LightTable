@@ -3,10 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from web_remote import ControlState, WebRemote, _load_config
-from control_window import _load_settings
+from control_window import ControlWindow, _load_settings
 
 
 class RemoteTests(unittest.TestCase):
@@ -89,6 +89,16 @@ class RemoteTests(unittest.TestCase):
 
 
 class CameraSwitchTests(unittest.TestCase):
+    def test_tracker_dropdown_recognizes_mediapipe_hands(self):
+        ui = object.__new__(ControlWindow)
+        ui._tracker_frame = SimpleNamespace(winfo_children=lambda: [])
+        ui._tracker_vars = {}
+        ui._tracker_var = Mock()
+        ui.rebuild_for_tracker(SimpleNamespace(
+            name="MediaPipe Hands", get_trackbar_settings=lambda: []
+        ))
+        ui._tracker_var.set.assert_called_once_with("Hands")
+
     def test_failed_camera_switch_preserves_current_capture(self):
         from main import LightTableCV
 
