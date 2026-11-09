@@ -1,4 +1,4 @@
 @echo off
 :: Redirecting to the new unified launcher
-call start.bat
-exit
+call "%~dp0start.bat" %*
+exit /b

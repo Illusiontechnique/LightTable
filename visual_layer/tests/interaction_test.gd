@@ -48,6 +48,21 @@ func _run() -> void:
 		return
 	_press_key(app, KEY_T)
 	var receiver = app.get_node("NetworkReceiver")
+	var audio_listener := PacketPeerUDP.new()
+	if not _check(audio_listener.bind(7001, "127.0.0.1") == OK, "Audio status test could not bind port 7001"):
+		return
+	app.audio_raw_level = 0.25
+	app.audio_level = 0.6
+	receiver._parse_json_packet(JSON.stringify({"type": "command", "cmd": "status_request"}).to_utf8_buffer(), "127.0.0.1")
+	if not _check(audio_listener.get_available_packet_count() > 0, "Godot did not send audio telemetry"):
+		return
+	var audio_status: Dictionary = JSON.parse_string(audio_listener.get_packet().get_string_from_utf8())
+	if not _check(is_equal_approx(audio_status["audio_raw"], 0.25) and is_equal_approx(audio_status["audio_level"], 0.6), "Audio telemetry must use measured values"):
+		return
+	receiver._parse_json_packet(JSON.stringify({"type": "command", "cmd": "set_audio", "floor": 0.1, "ceiling": 0.5}).to_utf8_buffer(), "127.0.0.1")
+	if not _check(is_equal_approx(app.map_audio_level(0.3), 0.5), "Audio floor/ceiling must control mapped level"):
+		return
+	audio_listener.close()
 	var interactions = app.get_node("Interactions")
 	receiver._parse_json_packet(JSON.stringify({
 		"type": "interaction", "id": 1.5, "x": 0.3, "y": 0.4

@@ -89,12 +89,13 @@ func _parse_json_packet(packet: PackedByteArray, sender_ip: String = ""):
 			if typeof(data.get("mode", "")) == TYPE_STRING:
 				track_mode_changed.emit(data.mode)
 
-func send_status(scene_name: String, request_id: String = ""):
+func send_status(scene_name: String, request_id: String = "", audio: Dictionary = {}):
 	if _remote_host.is_empty() or not peer.is_bound():
 		return
 	if peer.set_dest_address(_remote_host, 7001) != OK:
 		return
 	var status := {"type": "godot_status", "scene": scene_name}
+	status.merge(audio)
 	if not request_id.is_empty():
 		status["request_id"] = request_id
 	peer.put_packet(JSON.stringify(status).to_utf8_buffer())

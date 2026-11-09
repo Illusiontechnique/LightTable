@@ -36,7 +36,9 @@ class InteractionPipelineTests(unittest.TestCase):
             app._tracker_error, app._motion_enabled = None, False
             app._processing_times = deque(maxlen=30)
             app._cam_idx = 0
-            app.ui = SimpleNamespace(update_calibration_status=Mock())
+            app.ui = SimpleNamespace(update_calibration_status=Mock(),
+                                     is_open=Mock(return_value=True), _preview_on=True)
+            app._ctrl_state = SimpleNamespace(preview=SimpleNamespace(wants=Mock(return_value=False)))
             app.bridge = SimpleNamespace(send_motion_frame=Mock())
             app._last_udp_ok = None
             app._send = Mock()

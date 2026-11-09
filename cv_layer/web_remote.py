@@ -4,9 +4,8 @@ web_remote.py  —  Flask phone remote for LightTable.
 Runs in a background daemon thread started by main.py.
 Open  http://<machine-ip>:5000  on any phone on the same WiFi/LAN.
 
-PIN login (default 1234) — change in remote_config.json at project root.
-The secret_key is auto-generated on first run and persisted so phone sessions
-survive a CV-layer restart within the same day.
+Configure the PIN in remote_config.json at the project root. If no valid PIN
+is configured, a temporary PIN is generated. Sessions use a per-run secret.
 
 Commands are sent directly over UDP to Godot on port 7000 using the same
 JSON-over-UDP protocol as the CV layer.
@@ -27,12 +26,31 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from flask import Flask, jsonify, redirect, request, session, url_for
+from operator_preview import OperatorPreview
+from environment_presets import EnvironmentPresets
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Config  (remote_config.json at project root, one level above cv_layer/)
 # ─────────────────────────────────────────────────────────────────────────────
 _CFG_PATH = Path(__file__).parent.parent / "remote_config.json"
 _DEFAULTS  = {"port": 5000}
+
+
+def _validate_operator_values(values, specs):
+    if not isinstance(values, dict):
+        raise ValueError("settings must be an object")
+    for name, value in values.items():
+        spec = specs.get(name)
+        if spec is None:
+            raise ValueError(f"unknown setting: {name}")
+        if "options" in spec:
+            valid = isinstance(value, str) and value in spec["options"]
+        elif spec.get("type") == "boolean":
+            valid = isinstance(value, bool)
+        else:
+            valid = type(value) is int and spec["min"] <= value <= spec["max"]
+        if not valid:
+            raise ValueError(f"invalid value for {name}")
 
 
 def _load_config() -> dict:
@@ -46,11 +64,13 @@ def _load_config() -> dict:
         except (OSError, ValueError, TypeError) as exc:
             print(f"[WebRemote] Invalid remote configuration; using defaults: {exc}")
     pin = str(cfg.get("pin", ""))
-    if not pin.isdigit() or not 4 <= len(pin) <= 12 or pin == "1234":
+    if not pin.isascii() or not pin.isdigit() or not 4 <= len(pin) <= 12:
         cfg["pin"] = f"{secrets.randbelow(1_000_000):06d}"
         cfg["generated_pin"] = True
     else:
         cfg["generated_pin"] = False
+        if len(pin) < 6:
+            print("[WebRemote] Warning: short PINs are easy to guess; use a private six-digit or longer PIN on shared networks.")
     try:
         cfg["port"] = max(1024, min(65535, int(cfg.get("port", 5000))))
     except (TypeError, ValueError):
@@ -147,9 +167,13 @@ class ControlState:
 
     def __init__(self):
         self._lock            = threading.Lock()
+        self.preview = OperatorPreview()
+        self._operator = None
+        self._operator_commands = deque(maxlen=32)
         self._pending_tracker: int | None = None
         self._t0              = time.monotonic()
         self._godot_last_seen = 0.0
+        self._audio_last_seen = 0.0
         self._pending_scene_time = 0.0
         self._status = {
             "scene":       "Not confirmed",
@@ -172,6 +196,27 @@ class ControlState:
         with self._lock:
             self._pending_tracker = idx
 
+    def publish_operator(self, snapshot):
+        with self._lock:
+            self._operator = snapshot
+
+    def operator_snapshot(self):
+        with self._lock:
+            return self._operator
+
+    def queue_operator(self, command):
+        with self._lock:
+            if len(self._operator_commands) >= self._operator_commands.maxlen:
+                return False
+            self._operator_commands.append(command)
+            return True
+
+    def pop_operator_commands(self):
+        with self._lock:
+            commands = list(self._operator_commands)
+            self._operator_commands.clear()
+            return commands
+
     def set_scene_name(self, name: str, request_id=None):
         with self._lock:
             self._status["pending_scene"] = name
@@ -190,6 +235,13 @@ class ControlState:
         with self._lock:
             if "scene" in data and isinstance(data["scene"], str):
                 self._status["scene"] = data["scene"]
+            for key in ("audio_raw", "audio_level", "audio_floor", "audio_ceil"):
+                value = data.get(key)
+                if type(value) in (float, int) and 0 <= value <= 1:
+                    self._status[key] = value
+            if data.get("audio_status") in ("active", "unavailable", "no input frames"):
+                self._status["audio_status"] = data["audio_status"]
+                self._audio_last_seen = time.monotonic()
             if data.get("request_id") == self._status["pending_scene_id"]:
                 self._status["pending_scene"] = None
                 self._status["pending_scene_id"] = None
@@ -213,7 +265,6 @@ class ControlState:
     def update_status(self, audio: float, tracker_idx: int, detections: int, **diagnostics):
         with self._lock:
             self._status.update({
-                "audio_level": round(audio, 3),
                 "tracker":     TRACKER_NAMES[tracker_idx] if 0 <= tracker_idx < len(TRACKER_NAMES) else "?",
                 "tracker_idx": tracker_idx,
                 "uptime_s":    int(time.monotonic() - self._t0),
@@ -226,6 +277,7 @@ class ControlState:
             status = dict(self._status)
             now = time.monotonic()
             status["godot_connected"] = now - self._godot_last_seen < 10.0
+            status["audio_fresh"] = now - self._audio_last_seen < 1.0
             if status["pending_scene"] and now - self._pending_scene_time > 10.0:
                 status["pending_scene"] = None
                 status["pending_scene_id"] = None
@@ -394,6 +446,18 @@ input[type=range]{flex:1;accent-color:#32cee8;height:22px;cursor:pointer}
          touch-action:manipulation}
 .clr-btn:active{background:#2a1414}
 .uptime{font-size:.68rem;color:#1e3848;white-space:nowrap}
+.tabs{display:flex;gap:.3rem;overflow:auto;padding:.6rem;position:sticky;top:3.3rem;background:#06080d;z-index:10}
+.tabs button,.opbutton{background:#0d1c26;border:1px solid #1c3848;color:#a8c0c8;border-radius:8px;padding:.6rem;cursor:pointer}
+.tabs button.active{border-color:#32cee8;color:#32cee8}
+.operator-page[hidden]{display:none}
+.oprow{display:flex;align-items:center;gap:.6rem;margin:.5rem 0}
+.oprow label{min-width:110px;font-size:.8rem}
+.oprow output{min-width:3rem;text-align:right}
+.preview{display:block;width:100%;height:auto;max-width:640px;background:#111;touch-action:manipulation}
+.meter{width:100%;height:1rem}
+.meter-wrap{position:relative}
+.meter-marker{position:absolute;top:0;height:100%;width:2px;background:#ffcc55;pointer-events:none}
+.op-error{color:#ffb075;min-height:1.2em}
 </style></head>
 <body>
 <header>
@@ -412,6 +476,15 @@ input[type=range]{flex:1;accent-color:#32cee8;height:22px;cursor:pointer}
   </div>
 </div>
 
+<nav class="tabs">
+  <button class="active" onclick="showPage('play',this)">Play</button>
+  <button onclick="showPage('tracking',this)">Tracking</button>
+  <button onclick="showPage('calibration',this)">Calibration</button>
+  <button onclick="showPage('diagnostics',this)">Diagnostics</button>
+  <button onclick="showPage('settings',this)">Settings</button>
+</nav>
+<div id="operatorError" class="op-error" role="status"></div>
+<section id="page-play" class="operator-page">
 <div class="status-card">
   <div class="scene-now" id="sceneName">—</div>
   <div class="stat-row">
@@ -423,28 +496,69 @@ input[type=range]{flex:1;accent-color:#32cee8;height:22px;cursor:pointer}
 
 <div class="sec">Scenes</div>
 <div class="scene-grid">%%SCENE_BUTTONS%%</div>
+</section>
 
+<section id="page-tracking" class="operator-page" hidden>
 <div class="sec">Tracking</div>
 <div class="ctrl-card">
-  <div class="crow">
-    <span class="clbl">Tracker</span>
-    <select id="trackerSel" onchange="setTracker(this.value)">%%TRACKER_OPTIONS%%</select>
+  <div id="trackingControls"></div>
+</div>
+</section>
+
+<section id="page-calibration" class="operator-page" hidden>
+  <div class="ctrl-card">
+    <div id="calStatus">Waiting for camera</div>
+    <p>Start, then tap top-left, top-right, bottom-right, bottom-left.</p>
+    <img id="calPreview" class="preview" alt="Calibration camera preview" onclick="calibrationPoint(event)">
+    <label>Saved profile <select id="calProfiles"></select></label>
+    <div id="calButtons"></div>
+  </div>
+</section>
+<section id="page-diagnostics" class="operator-page" hidden>
+<div class="ctrl-card">
+  <label>Preview <select id="previewMode"><option value="camera">Adjusted camera</option><option value="overlay">Tracking overlay</option><option value="motion">Motion intensity</option></select></label>
+  <label>Refresh <select id="previewRate"><option value="200">5 fps</option><option value="500">2 fps</option><option value="1000">1 fps</option></select></label>
+  <img id="diagnosticPreview" class="preview" alt="Camera preview">
+  <div id="diagnosticsText"></div>
+  <div id="diagnosticsDetail"></div>
+  <div id="objectControls" hidden>
+    <p>Object tracker: select the top-left and bottom-right corners on the adjusted camera preview.</p>
+    <button class="opbutton" onclick="beginObjectSelection()">Select object</button>
+    <button class="opbutton" onclick="postJson('/operator/object',{action:'clear'})">Clear objects</button>
   </div>
 </div>
-
 <div class="sec">Microphone</div>
 <div class="ctrl-card">
+  <div id="micStatus">Waiting for Godot</div>
+  <div>Incoming <span id="rawValue">—</span> (yellow markers: floor and ceiling)</div><div class="meter-wrap"><progress id="rawMeter" class="meter" max="1" value="0"></progress><span id="floorMarker" class="meter-marker"></span><span id="ceilMarker" class="meter-marker"></span></div>
+  <div>Mapped <span id="mappedValue">—</span></div><progress id="mappedMeter" class="meter" max="1" value="0"></progress>
   <div class="crow">
     <span class="clbl">Floor</span>
-    <input type="range" id="floorSlider" min="0" max="100" value="1" oninput="sliderMoved()">
+    <input type="range" id="floorSlider" min="0" max="999" value="10" oninput="sliderMoved()">
     <span class="cval" id="floorVal">0.01</span>
   </div>
   <div class="crow">
     <span class="clbl">Ceiling</span>
-    <input type="range" id="ceilSlider" min="0" max="100" value="18" oninput="sliderMoved()">
+    <input type="range" id="ceilSlider" min="1" max="1000" value="180" oninput="sliderMoved()">
     <span class="cval" id="ceilVal">0.18</span>
   </div>
 </div>
+</section>
+<section id="page-settings" class="operator-page" hidden>
+  <div class="ctrl-card">
+    <div>Environment presets</div>
+    <select id="presetList"></select>
+    <div><button class="opbutton" onclick="presetAction('load')">Load</button>
+    <button class="opbutton" onclick="presetAction('rename')">Rename</button>
+    <button class="opbutton" onclick="presetAction('delete')">Delete</button>
+    <button class="opbutton" onclick="presetAction('save')">Save current</button></div>
+    <p>Presets save tracking, camera, image, motion, and confirmed audio settings. Calibration is loaded only for a matching camera configuration.</p>
+    <p>Preview refresh settings are local to this browser session.</p>
+    <p>These controls restart or stop the CV and web remote process, not Godot.</p>
+    <button class="opbutton" onclick="lifecycle('restart')">Restart CV and remote</button>
+    <button class="opbutton" onclick="lifecycle('shutdown')">Stop CV and remote</button>
+  </div>
+</section>
 
 <div class="footer">
   <button class="clr-btn" onclick="clearCursors()">Clear Cursors</button>
@@ -469,7 +583,7 @@ input[type=range]{flex:1;accent-color:#32cee8;height:22px;cursor:pointer}
 </div>
 
 <script>
-let audioTimer=null;
+let audioTimer=null, audioEditingUntil=0;
 
 // ── Profiles ─────────────────────────────────────────────────────────────────
 async function openProfiles(){
@@ -522,14 +636,13 @@ async function setTracker(v){
 
 // ── Audio sliders ────────────────────────────────────────────────────────────
 function sliderMoved(){
-  const fl=parseInt(document.getElementById('floorSlider').value)/100;
-  const cl=parseInt(document.getElementById('ceilSlider').value)/100;
-  document.getElementById('floorVal').textContent=fl.toFixed(2);
-  document.getElementById('ceilVal').textContent=cl.toFixed(2);
-  clearTimeout(audioTimer);
-  audioTimer=setTimeout(()=>fetch('/audio',{method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({floor:fl,ceil:cl})}),380);
+  clearTimeout(audioTimer); audioEditingUntil=Date.now()+600;
+  const fl=parseInt(document.getElementById('floorSlider').value)/1000;
+  const cl=parseInt(document.getElementById('ceilSlider').value)/1000;
+  document.getElementById('floorVal').textContent=fl.toFixed(3);
+  document.getElementById('ceilVal').textContent=cl.toFixed(3);
+  if(fl>=cl){document.getElementById('operatorError').textContent='Floor must be below ceiling';return}
+  audioTimer=setTimeout(()=>postJson('/audio',{floor:fl,ceil:cl}),180);
 }
 
 // ── Clear cursors ────────────────────────────────────────────────────────────
@@ -552,24 +665,187 @@ async function poll(){
     document.getElementById('runtimeStatus').textContent=
       (d.godot_connected?'Godot connected':'Godot not confirmed')+' · Camera '+(d.camera||'unknown')+
       ' · Calibration '+(d.calibration||'unknown')+(d.scene_error?' · '+d.scene_error:'');
+    document.getElementById('diagnosticsDetail').textContent=
+      'Camera '+(d.camera||'unknown')+' · '+(d.tracker||'unknown')+' · '+(d.detections||0)+
+      ' detections · Godot '+(d.godot_connected?'connected':'not confirmed');
     document.getElementById('afill').style.width=(d.audio_level*100)+'%';
     document.getElementById('detTxt').textContent=(d.detections||0)+' pts';
     const u=d.uptime_s||0,mm=String(Math.floor(u/60)).padStart(2,'0'),ss=String(u%60).padStart(2,'0');
     document.getElementById('uptimeTxt').textContent=mm+':'+ss;
-    const sel=document.getElementById('trackerSel');
-    if(document.activeElement!==sel&&d.tracker_idx!==undefined)sel.value=d.tracker_idx;
     // Sync audio sliders only if not being touched
-    if(document.activeElement!==document.getElementById('floorSlider')&&d.audio_floor!==undefined){
-      document.getElementById('floorSlider').value=Math.round(d.audio_floor*100);
-      document.getElementById('floorVal').textContent=d.audio_floor.toFixed(2);
+    if(Date.now()>audioEditingUntil&&document.activeElement!==document.getElementById('floorSlider')&&d.audio_floor!==undefined){
+      document.getElementById('floorSlider').value=Math.round(d.audio_floor*1000);
+      document.getElementById('floorVal').textContent=d.audio_floor.toFixed(3);
     }
-    if(document.activeElement!==document.getElementById('ceilSlider')&&d.audio_ceil!==undefined){
-      document.getElementById('ceilSlider').value=Math.round(d.audio_ceil*100);
-      document.getElementById('ceilVal').textContent=d.audio_ceil.toFixed(2);
+    if(Date.now()>audioEditingUntil&&document.activeElement!==document.getElementById('ceilSlider')&&d.audio_ceil!==undefined){
+      document.getElementById('ceilSlider').value=Math.round(d.audio_ceil*1000);
+      document.getElementById('ceilVal').textContent=d.audio_ceil.toFixed(3);
     }
   }catch(e){document.getElementById('conn').className='conn';}
 }
-poll(); setInterval(poll,3000);
+let page='play', operatorData=null, previewTimer=null, previewGeneration=0, settingTimers={}, audioPollBusy=false, objectCorner=null, selectingObject=false;
+function showPage(name,button){
+  page=name;
+  document.querySelectorAll('.operator-page').forEach(el=>el.hidden=el.id!=='page-'+name);
+  document.querySelectorAll('.tabs button').forEach(el=>el.classList.toggle('active',el===button));
+  previewGeneration++;
+  clearTimeout(previewTimer);
+  if(name==='diagnostics'||name==='calibration') updatePreview();
+  if(name==='settings') refreshPresets();
+  refreshOperator();
+}
+async function postJson(url,data){
+  try{
+    const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+    const result=await r.json();
+    if(!r.ok) throw new Error(result.error||'Request failed');
+    document.getElementById('operatorError').textContent='';
+    return result;
+  }catch(e){document.getElementById('operatorError').textContent=e.message; return null}
+}
+async function updatePreview(){
+  if(document.hidden||!(page==='diagnostics'||page==='calibration')) return;
+  const generation=previewGeneration;
+  const mode=page==='calibration'?'overlay':document.getElementById('previewMode').value;
+  const image=document.getElementById(page==='calibration'?'calPreview':'diagnosticPreview');
+  try{
+    const response=await fetch('/preview/'+mode,{cache:'no-store'});
+    if(response.ok){
+      const blob=await response.blob(), old=image.dataset.url;
+      const url=URL.createObjectURL(blob); image.src=url; image.dataset.url=url;
+      image.dataset.context=response.headers.get('X-LightTable-Context')||'';
+      if(old) URL.revokeObjectURL(old);
+    }else image.removeAttribute('src');
+  }catch(e){image.removeAttribute('src')}
+  if(generation===previewGeneration&&(page==='diagnostics'||page==='calibration'))
+    previewTimer=setTimeout(updatePreview,Number(document.getElementById('previewRate').value));
+}
+document.addEventListener('visibilitychange',()=>{
+  previewGeneration++; clearTimeout(previewTimer); if(!document.hidden) updatePreview();
+});
+function makeControl(name,spec,isTracker){
+  const trackerName=operatorData.tracker_name;
+  const row=document.createElement('div'); row.className='oprow';
+  const label=document.createElement('label'); label.textContent=name.replaceAll('_',' '); row.appendChild(label);
+  let input;
+  if(spec.options){
+    input=document.createElement('select');
+    spec.options.forEach(value=>{const option=document.createElement('option');option.value=value;option.textContent=value;input.appendChild(option)});
+    input.value=spec.value;
+  }else{
+    input=document.createElement('input'); input.type=spec.type==='boolean'?'checkbox':'range';
+    if(input.type==='checkbox')input.checked=spec.value;
+    else {input.min=spec.min;input.max=spec.max;input.step=1;input.value=spec.value}
+  }
+  const out=document.createElement('output'); out.textContent=String(spec.value);
+  input.oninput=()=>{
+    const value=input.type==='checkbox'?input.checked:(input.type==='range'?Number(input.value):input.value);
+    out.textContent=String(value);
+    clearTimeout(settingTimers[name]);
+    settingTimers[name]=setTimeout(()=>{
+      const payload={settings:{},tracker_settings:{},tracker_name:trackerName};
+      payload[isTracker?'tracker_settings':'settings'][name]=value;
+      postJson('/operator/settings',payload);
+    },180);
+  };
+  row.appendChild(input);row.appendChild(out);return row;
+}
+async function refreshOperator(){
+  try{
+    const response=await fetch('/operator',{cache:'no-store'}); if(!response.ok)return;
+    operatorData=await response.json();
+    document.getElementById('objectControls').hidden=operatorData.tracker_name!=='Object Tracking (CSRT)';
+    if(operatorData.message)document.getElementById('operatorError').textContent=operatorData.message;
+    if(page==='tracking'&&!document.querySelector('#trackingControls input:focus, #trackingControls select:focus')){
+      const container=document.getElementById('trackingControls');container.replaceChildren();
+      for(const [name,spec] of Object.entries(operatorData.settings))container.appendChild(makeControl(name,spec,false));
+      for(const [name,spec] of Object.entries(operatorData.tracker_settings))container.appendChild(makeControl(name,spec,true));
+    }
+    const cal=operatorData.calibration;
+    document.getElementById('calStatus').textContent=cal.state+': '+cal.message+' · '+
+      cal.points.length+' points '+cal.points.map(p=>'('+p[0]+', '+p[1]+')').join(' ');
+    const profiles=document.getElementById('calProfiles'), oldProfile=profiles.value;
+    profiles.replaceChildren();
+    (cal.profiles||[]).forEach(profile=>{const option=document.createElement('option');option.value=profile.id;
+      option.textContent=profile.name+(profile.compatible?'':' (incompatible)');option.disabled=!profile.compatible;profiles.appendChild(option)});
+    if(oldProfile)profiles.value=oldProfile;
+    document.getElementById('diagnosticsText').textContent=
+      'Capture '+operatorData.capture_fps.toFixed(1)+' fps · Processing '+operatorData.processing_fps.toFixed(1)+
+      ' fps · UDP '+operatorData.udp;
+  }catch(e){document.getElementById('operatorError').textContent='Operator status unavailable'}
+}
+async function refreshPresets(){
+  try{
+    const r=await fetch('/operator/presets'),d=await r.json();if(!r.ok)throw new Error(d.error);
+    const list=document.getElementById('presetList'), old=list.value;list.replaceChildren();
+    d.presets.forEach(name=>{const option=document.createElement('option');option.value=name;option.textContent=name;list.appendChild(option)});
+    if(d.presets.includes(old))list.value=old;
+  }catch(e){document.getElementById('operatorError').textContent=e.message}
+}
+async function presetAction(action){
+  let name=document.getElementById('presetList').value,new_name;
+  if(action==='save')name=prompt('Name for current environment');
+  if(!name)return;
+  if(action==='rename'){new_name=prompt('New preset name',name);if(!new_name)return}
+  if(action==='delete'&&!confirm('Delete preset '+name+'?'))return;
+  const result=await postJson('/operator/presets',{action,name,new_name});
+  if(result){if(result.message)document.getElementById('operatorError').textContent=result.message;refreshPresets()}
+}
+async function lifecycle(action){
+  if(!confirm((action==='restart'?'Restart':'Stop')+' the CV and remote process? Godot will remain running.'))return;
+  const result=await postJson('/operator/lifecycle',{action,confirm:true});
+  if(result)document.getElementById('operatorError').textContent='Request accepted; connection will close.';
+}
+['start','undo','cancel','reset','save','load'].forEach(action=>{
+  const button=document.createElement('button');button.className='opbutton';button.textContent=action;
+  button.onclick=()=>postJson('/operator/calibration',{action,profile:document.getElementById('calProfiles').value});document.getElementById('calButtons').appendChild(button);
+});
+function calibrationPoint(event){
+  if(!operatorData||operatorData.calibration.state!=='selecting')return;
+  const rect=event.currentTarget.getBoundingClientRect();
+  const x=(event.clientX-rect.left)/rect.width,y=(event.clientY-rect.top)/rect.height;
+  postJson('/operator/calibration',{action:'point',x,y,context:event.currentTarget.dataset.context});
+}
+function beginObjectSelection(){
+  document.getElementById('previewMode').value='camera';
+  objectCorner=null; selectingObject=true;
+  document.getElementById('operatorError').textContent='Tap top-left then bottom-right of the object.';
+}
+document.getElementById('diagnosticPreview').addEventListener('click',event=>{
+  if(!selectingObject)return;
+  const rect=event.currentTarget.getBoundingClientRect();
+  const point={x:(event.clientX-rect.left)/rect.width,y:(event.clientY-rect.top)/rect.height};
+  if(!objectCorner){objectCorner=point;return}
+  const x=Math.min(point.x,objectCorner.x),y=Math.min(point.y,objectCorner.y);
+  const width=Math.abs(point.x-objectCorner.x),height=Math.abs(point.y-objectCorner.y);
+  selectingObject=false;
+  postJson('/operator/object',{action:'add',x,y,width,height,context:event.currentTarget.dataset.context});
+});
+async function pollAudio(){
+  if(document.hidden||page!=='diagnostics'||audioPollBusy)return;
+  audioPollBusy=true;
+  try{
+    const r=await fetch('/status',{cache:'no-store'}), d=await r.json();
+    const fresh=d.audio_fresh && d.audio_status, active=fresh&&d.audio_status==='active';
+    document.getElementById('micStatus').textContent=fresh?'Microphone: '+d.audio_status:'Godot telemetry unavailable';
+    for(const [key,id] of [['audio_raw','raw'],['audio_level','mapped']]){
+      const v=active&&typeof d[key]==='number'?d[key]:0;
+      document.getElementById(id+'Meter').value=v;
+      document.getElementById(id+'Value').textContent=active?v.toFixed(3):'—';
+    }
+    if(active && Date.now()>audioEditingUntil){
+      for(const [key,id] of [['audio_floor','floor'],['audio_ceil','ceil']]){
+        if(typeof d[key]==='number'){
+          document.getElementById(id+'Slider').value=Math.round(d[key]*1000);
+          document.getElementById(id+'Val').textContent=d[key].toFixed(3);
+          document.getElementById(id+'Marker').style.left=(d[key]*100)+'%';
+        }
+      }
+    }
+  }catch(e){document.getElementById('micStatus').textContent='Status unavailable'}
+  finally{audioPollBusy=false}
+}
+poll(); refreshOperator(); setInterval(poll,3000); setInterval(refreshOperator,1000); setInterval(pollAudio,100);
 </script>
 </body></html>"""
 
@@ -599,10 +875,14 @@ class WebRemote:
         self._godot_port  = godot_port
         self._cfg         = _load_config()
         self._port        = int(self._cfg.get("port", 5000))
-        self._audio_floor = 0.01
-        self._audio_ceil  = 0.18
         self._udp_socket = None
+        self._stop_event = threading.Event()
+        self._server = None
+        self._server_thread = None
+        self._status_thread = None
         self._login_attempts = {}
+        self._login_lock = threading.Lock()
+        self._presets = EnvironmentPresets()
 
     # ── UDP helper ────────────────────────────────────────────────────────────
     def _send_godot(self, data: dict) -> None:
@@ -616,7 +896,8 @@ class WebRemote:
 
     def _listen_godot_status(self):
         next_request = 0.0
-        while True:
+        disconnected_reported = False
+        while not self._stop_event.is_set():
             try:
                 now = time.monotonic()
                 if now >= next_request:
@@ -626,17 +907,23 @@ class WebRemote:
                     self._udp_socket.sendto(
                         request_packet, (self._godot_host, self._godot_port)
                     )
-                    next_request = now + 2.0
+                    next_request = now + 0.1
                 payload, sender = self._udp_socket.recvfrom(65535)
                 if sender[0] != "127.0.0.1":
                     continue
                 data = json.loads(payload.decode("utf-8"))
                 if isinstance(data, dict) and data.get("type") == "godot_status":
                     self._state.update_godot_status(data)
+                    disconnected_reported = False
             except socket.timeout:
                 continue
+            except ConnectionResetError:
+                if not disconnected_reported:
+                    print("[WebRemote] Godot is not responding; continuing to retry.")
+                    disconnected_reported = True
             except OSError as exc:
-                print(f"[WebRemote] Godot status listener stopped: {exc}")
+                if not self._stop_event.is_set():
+                    print(f"[WebRemote] Godot status listener stopped: {exc}")
                 return
             except (UnicodeDecodeError, ValueError):
                 print("[WebRemote] Ignored malformed Godot status datagram")
@@ -644,7 +931,7 @@ class WebRemote:
     # ── Page builder ──────────────────────────────────────────────────────────
     def _build_main_page(self) -> str:
         scene_btns = "\n".join(
-            f'<button class="sb" data-scene="{s}" ontouchstart="" onclick="loadScene({json.dumps(s)})">{s}</button>'
+            f'<button class="sb" data-scene="{s}" ontouchstart="" onclick=\'loadScene({json.dumps(s)})\'>{s}</button>'
             for s in SCENES
         )
         tracker_opts = "\n".join(
@@ -665,7 +952,8 @@ class WebRemote:
         app.config.update(
             SESSION_COOKIE_SAMESITE='Strict',
             SESSION_COOKIE_SECURE=False,
-            SESSION_COOKIE_HTTPONLY=True
+            SESSION_COOKIE_HTTPONLY=True,
+            MAX_CONTENT_LENGTH=65536,
         )
 
         pin_cfg = str(self._cfg["pin"])
@@ -694,23 +982,29 @@ class WebRemote:
             data = request.get_json(silent=True) or {}
             if not isinstance(data, dict):
                 return jsonify({"ok": False, "error": "invalid request"}), 400
-            pin = str(data.get("pin", ""))
+            pin = data.get("pin", "")
             client = request.remote_addr or "unknown"
             now = time.monotonic()
-            attempts = remote._login_attempts.setdefault(client, deque())
-            while attempts and now - attempts[0] > 60:
-                attempts.popleft()
-            if len(attempts) >= 5:
-                return jsonify({"ok": False, "error": "too many attempts"}), 429
-            # Use compare_digest to guard against timing attacks
-            ok = secrets.compare_digest(pin, pin_cfg)
+            with remote._login_lock:
+                if client not in remote._login_attempts and len(remote._login_attempts) >= 1024:
+                    oldest = min(remote._login_attempts, key=lambda key: remote._login_attempts[key][-1]
+                                 if remote._login_attempts[key] else 0)
+                    del remote._login_attempts[oldest]
+                attempts = remote._login_attempts.setdefault(client, deque())
+                while attempts and now - attempts[0] > 60:
+                    attempts.popleft()
+                if len(attempts) >= 5:
+                    return jsonify({"ok": False, "error": "too many attempts"}), 429
+                valid_pin = isinstance(pin, str) and pin.isascii() and pin.isdigit() and 4 <= len(pin) <= 12
+                ok = valid_pin and secrets.compare_digest(pin, pin_cfg)
+                if ok:
+                    attempts.clear()
+                else:
+                    attempts.append(now)
             if ok:
-                attempts.clear()
                 session.clear()
                 session.permanent = True
                 session["authed"] = True
-            else:
-                attempts.append(now)
             return jsonify({"ok": ok})
 
         @app.get("/logout")
@@ -848,21 +1142,21 @@ class WebRemote:
             if not isinstance(data, dict):
                 return jsonify({"ok": False, "error": "invalid request"}), 400
             try:
-                fl = float(data.get("floor", remote._audio_floor))
-                cl = float(data.get("ceil", remote._audio_ceil))
-            except (TypeError, ValueError):
+                fl = float(data["floor"])
+                cl = float(data["ceil"])
+            except (KeyError, TypeError, ValueError, OverflowError):
                 return jsonify({"ok": False, "error": "audio levels must be numbers"}), 400
             if not math.isfinite(fl) or not math.isfinite(cl) or not 0 <= fl < cl <= 1:
                 return jsonify({"ok": False, "error": "audio range must satisfy 0 <= floor < ceiling <= 1"}), 400
+            if not state.get_status()["audio_fresh"]:
+                return jsonify({"ok": False, "error": "Godot audio settings unavailable"}), 503
             try:
                 remote._send_godot({"type": "command", "cmd": "set_audio",
                                     "floor": fl, "ceiling": cl})
             except OSError as exc:
                 print(f"[WebRemote] Could not send audio command: {exc}")
                 return jsonify({"ok": False, "error": "Godot command could not be sent"}), 503
-            remote._audio_floor = fl
-            remote._audio_ceil = cl
-            return jsonify({"ok": True})
+            return jsonify({"ok": True, "pending": True})
 
         @app.post("/clear_cursors")
         def clear_cursors():
@@ -881,9 +1175,207 @@ class WebRemote:
             if not _authed():
                 return jsonify({"ok": False, "error": "unauthorized"}), 401
             st = state.get_status()
-            st["audio_floor"] = remote._audio_floor
-            st["audio_ceil"]  = remote._audio_ceil
             return jsonify(st)
+
+        @app.get("/preview/<mode>")
+        def preview(mode):
+            if not _authed():
+                return jsonify({"ok": False, "error": "unauthorized"}), 401
+            if mode not in OperatorPreview.MODES:
+                return jsonify({"ok": False, "error": "unknown preview"}), 400
+            result = state.preview.request(mode)
+            if result is None:
+                return jsonify({"ok": False, "error": "preview waiting for camera"}), 503
+            image, context = result
+            from flask import Response
+            return Response(image, mimetype="image/jpeg",
+                            headers={"Cache-Control": "no-store, private",
+                                     "X-LightTable-Context": context})
+
+        @app.get("/operator")
+        def operator_status():
+            if not _authed():
+                return jsonify({"ok": False, "error": "unauthorized"}), 401
+            snapshot = state.operator_snapshot()
+            if snapshot is None:
+                return jsonify({"ok": False, "error": "application starting"}), 503
+            return jsonify(snapshot)
+
+        @app.post("/operator/lifecycle")
+        def operator_lifecycle():
+            if not _authed():
+                return jsonify({"ok": False, "error": "unauthorized"}), 401
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict) or data.get("confirm") is not True or data.get("action") not in ("shutdown", "restart"):
+                return jsonify({"ok": False, "error": "confirmation and valid action required"}), 400
+            if not state.queue_operator({"type": "lifecycle", "action": data["action"]}):
+                return jsonify({"ok": False, "error": "application busy"}), 503
+            return jsonify({"ok": True, "pending": True})
+
+        @app.post("/operator/object")
+        def operator_object():
+            if not _authed():
+                return jsonify({"ok": False, "error": "unauthorized"}), 401
+            data = request.get_json(silent=True)
+            snapshot = state.operator_snapshot()
+            if not isinstance(data, dict) or snapshot is None or data.get("action") not in ("add", "clear"):
+                return jsonify({"ok": False, "error": "invalid object request"}), 400
+            if snapshot["tracker_name"] != "Object Tracking (CSRT)":
+                return jsonify({"ok": False, "error": "select Object tracker first"}), 409
+            cal = snapshot["calibration"]
+            command = {"type": "object", "action": data["action"], "signature": cal["signature"]}
+            if data["action"] == "add":
+                if not cal["camera_connected"] or data.get("context") != cal["context"]:
+                    return jsonify({"ok": False, "error": "camera preview is stale"}), 409
+                for key in ("x", "y", "width", "height"):
+                    value = data.get(key)
+                    if type(value) not in (int, float) or not 0 <= value <= 1:
+                        return jsonify({"ok": False, "error": "invalid object region"}), 400
+                    command[key] = value
+                if (command["width"] < 0.01 or command["height"] < 0.01 or
+                        command["x"] + command["width"] > 1 or command["y"] + command["height"] > 1):
+                    return jsonify({"ok": False, "error": "invalid object region"}), 400
+            if not state.queue_operator(command):
+                return jsonify({"ok": False, "error": "application busy"}), 503
+            return jsonify({"ok": True, "pending": True})
+
+        @app.post("/operator/settings")
+        def operator_settings():
+            if not _authed():
+                return jsonify({"ok": False, "error": "unauthorized"}), 401
+            data = request.get_json(silent=True)
+            snapshot = state.operator_snapshot()
+            if not isinstance(data, dict) or snapshot is None:
+                return jsonify({"ok": False, "error": "settings unavailable"}), 400
+            values = data.get("settings", {})
+            tracker_values = data.get("tracker_settings", {})
+            if not isinstance(values, dict) or not isinstance(tracker_values, dict):
+                return jsonify({"ok": False, "error": "settings must be objects"}), 400
+            if tracker_values and data.get("tracker_name") != snapshot["tracker_name"]:
+                return jsonify({"ok": False, "error": "tracker has changed"}), 409
+            try:
+                _validate_operator_values(values, snapshot["settings"])
+                _validate_operator_values(tracker_values, snapshot["tracker_settings"])
+            except ValueError as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 400
+            if "tracker" in values and tracker_values:
+                return jsonify({"ok": False, "error": "change tracker before its parameters"}), 400
+            if not state.queue_operator({"type": "settings", "settings": values,
+                                         "tracker_settings": tracker_values,
+                                         "tracker_name": snapshot["tracker_name"]}):
+                return jsonify({"ok": False, "error": "application busy"}), 503
+            return jsonify({"ok": True, "pending": True})
+
+        @app.get("/operator/presets")
+        def list_environment_presets():
+            if not _authed():
+                return jsonify({"ok": False, "error": "unauthorized"}), 401
+            try:
+                return jsonify({"presets": remote._presets.list()})
+            except (OSError, ValueError) as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 500
+
+        @app.post("/operator/presets")
+        def environment_presets():
+            if not _authed():
+                return jsonify({"ok": False, "error": "unauthorized"}), 401
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return jsonify({"ok": False, "error": "invalid request"}), 400
+            action, name = data.get("action"), data.get("name")
+            if action not in ("save", "load", "rename", "delete") or not EnvironmentPresets.validate_name(name):
+                return jsonify({"ok": False, "error": "invalid action or name"}), 400
+            snapshot = state.operator_snapshot()
+            try:
+                if action == "save":
+                    if snapshot is None:
+                        raise ValueError("Application is not ready")
+                    if not snapshot.get("tracker_ready"):
+                        raise ValueError("Wait for the tracker change to finish")
+                    status = state.get_status()
+                    if not status["audio_fresh"] or "audio_floor" not in status or "audio_ceil" not in status:
+                        raise ValueError("Godot audio settings are not available")
+                    preset = {
+                        "settings": {k: v["value"] for k, v in snapshot["settings"].items()},
+                        "tracker_name": snapshot["tracker_name"],
+                        "tracker_settings": {k: v["value"] for k, v in snapshot["tracker_settings"].items()},
+                        "calibration_signature": snapshot["calibration"]["signature"],
+                        "audio_floor": status["audio_floor"], "audio_ceil": status["audio_ceil"],
+                    }
+                    remote._presets.save(name, preset)
+                elif action == "rename":
+                    new_name = data.get("new_name")
+                    if not EnvironmentPresets.validate_name(new_name):
+                        raise ValueError("Invalid new name")
+                    remote._presets.rename(name, new_name)
+                elif action == "delete":
+                    remote._presets.delete(name)
+                else:
+                    preset = remote._presets.get(name)
+                    if snapshot is None or not isinstance(preset, dict):
+                        raise ValueError("Preset not found or application not ready")
+                    if not state.get_status()["audio_fresh"]:
+                        return jsonify({"ok": False, "error": "Godot audio settings unavailable"}), 503
+                    _validate_operator_values(preset.get("settings"), snapshot["settings"])
+                    if ("tracker" not in preset["settings"] or
+                            not isinstance(preset.get("tracker_name"), str)):
+                        raise ValueError("Invalid saved tracker")
+                    tracker_values = preset.get("tracker_settings")
+                    if not isinstance(tracker_values, dict) or any(
+                        not isinstance(k, str) or type(v) is not int or v < 0 or v > 50000
+                        for k, v in tracker_values.items()
+                    ):
+                        raise ValueError("Invalid saved tracker settings")
+                    floor, ceiling = preset.get("audio_floor"), preset.get("audio_ceil")
+                    if (type(floor) not in (int, float) or type(ceiling) not in (int, float)
+                            or not 0 <= floor < ceiling <= 1):
+                        raise ValueError("Invalid saved audio range")
+                    command = {"type": "preset", "preset": preset}
+                    if not state.queue_operator(command):
+                        return jsonify({"ok": False, "error": "application busy"}), 503
+                    return jsonify({"ok": True, "pending": True,
+                                    "message": "Calibration will only load if the camera configuration matches."})
+                return jsonify({"ok": True})
+            except ValueError as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 400
+            except OSError as exc:
+                print(f"[WebRemote] Preset operation failed: {exc}")
+                return jsonify({"ok": False, "error": "Preset storage or Godot command failed"}), 503
+
+        @app.post("/operator/calibration")
+        def operator_calibration():
+            if not _authed():
+                return jsonify({"ok": False, "error": "unauthorized"}), 401
+            data = request.get_json(silent=True)
+            snapshot = state.operator_snapshot()
+            if not isinstance(data, dict) or snapshot is None:
+                return jsonify({"ok": False, "error": "calibration unavailable"}), 400
+            action = data.get("action")
+            if action not in ("start", "undo", "reset", "cancel", "save", "load", "point"):
+                return jsonify({"ok": False, "error": "invalid action"}), 400
+            command = {"type": "calibration", "action": action,
+                       "signature": snapshot["calibration"]["signature"]}
+            if command["signature"] is None:
+                return jsonify({"ok": False, "error": "camera is not ready"}), 409
+            if action == "load":
+                profile_id = data.get("profile")
+                if not any(profile["id"] == profile_id and profile["compatible"]
+                           for profile in snapshot["calibration"].get("profiles", [])):
+                    return jsonify({"ok": False, "error": "select a compatible profile"}), 409
+            if action == "point":
+                if snapshot["calibration"]["state"] != "selecting":
+                    return jsonify({"ok": False, "error": "start calibration first"}), 409
+                if (not snapshot["calibration"].get("camera_connected") or
+                        data.get("context") != snapshot["calibration"].get("context")):
+                    return jsonify({"ok": False, "error": "preview is stale or camera is disconnected"}), 409
+                for key in ("x", "y"):
+                    value = data.get(key)
+                    if type(value) not in (int, float) or not 0 <= value < 1:
+                        return jsonify({"ok": False, "error": "invalid point"}), 400
+                    command[key] = value
+            if not state.queue_operator(command):
+                return jsonify({"ok": False, "error": "application busy"}), 503
+            return jsonify({"ok": True, "pending": True})
 
         return app
 
@@ -914,23 +1406,36 @@ class WebRemote:
             self._udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self._udp_socket.bind(("127.0.0.1", 7001))
             self._udp_socket.settimeout(1.0)
-            threading.Thread(
+            self._status_thread = threading.Thread(
                 target=self._listen_godot_status, name="GodotStatus", daemon=True
-            ).start()
+            )
+            self._status_thread.start()
         except OSError as exc:
             if self._udp_socket is not None:
                 self._udp_socket.close()
                 self._udp_socket = None
             print(f"[WebRemote] Godot confirmation listener unavailable: {exc}")
 
-        def _run():
-            import logging
-            log = logging.getLogger("werkzeug")
-            log.setLevel(logging.ERROR)   # suppress per-request output
-            app.run(host="0.0.0.0", port=self._port, threaded=True, use_reloader=False)
+        import logging
+        from werkzeug.serving import make_server
+        logging.getLogger("werkzeug").setLevel(logging.ERROR)
+        self._server = make_server("0.0.0.0", self._port, app, threaded=True)
+        self._server_thread = threading.Thread(target=self._server.serve_forever, name="WebRemote", daemon=True)
+        self._server_thread.start()
 
-        t = threading.Thread(target=_run, name="WebRemote", daemon=True)
-        t.start()
+    def stop(self):
+        self._stop_event.set()
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+            if self._server_thread:
+                self._server_thread.join(timeout=2)
+            self._server = None
+        if self._udp_socket is not None:
+            self._udp_socket.close()
+        if self._status_thread:
+            self._status_thread.join(timeout=2)
+        self._udp_socket = None
 
     def get_url(self) -> str:
         return f"http://{_get_local_ip()}:{self._port}"

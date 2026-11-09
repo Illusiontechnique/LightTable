@@ -1,6 +1,7 @@
 # Local configuration files with secrets
 remote_config.json
 last_settings.json
+environment_presets.json
 
 # Python
 .venv/

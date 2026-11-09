@@ -30,6 +30,7 @@ class Calibration:
         self.active_profile = None
         self._previous = None
         self._profiles = {}
+        self._profile_listing_cache = None
         self._legacy_matrix_found = False
         self._load_error = None
         self._read_profiles()
@@ -82,6 +83,7 @@ class Calibration:
         if signature == self.signature:
             return self.state == self.CALIBRATED
         self.signature = signature
+        self._profile_listing_cache = None
         self.points = []
         self.matrix = None
         self.active_profile = None
@@ -272,6 +274,7 @@ class Calibration:
             "points": self.points,
             "matrix": self.matrix.tolist(),
         }
+        self._profile_listing_cache = None
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"version": 2, "profiles": list(self._profiles.values())}
         fd, temp_path = tempfile.mkstemp(prefix=self.config_path.name, dir=str(self.config_path.parent))
@@ -309,6 +312,17 @@ class Calibration:
         self.state = self.CALIBRATED
         self.message = "Calibration profile loaded"
         return True
+
+    def list_profiles(self):
+        if self._profile_listing_cache is None:
+            self._profile_listing_cache = [
+                {"id": key, "name": str(profile.get("name", "Unnamed profile")),
+                 "compatible": profile.get("signature") == self.signature
+                 and self.signature is not None
+                 and self._validate_saved_profile(profile, self.signature)}
+                for key, profile in self._profiles.items()
+            ]
+        return [dict(profile) for profile in self._profile_listing_cache]
 
     def load(self):
         """Compatibility entry point; never loads an unverified legacy matrix."""

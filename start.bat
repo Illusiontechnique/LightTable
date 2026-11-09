@@ -12,7 +12,7 @@ set GODOT_EXE="C:\Users\jasonhendrik\AppData\Local\Microsoft\WinGet\Packages\God
 :: 2. Start CV Layer (Background)
 echo [1/2] Starting CV Layer ...
 pushd "%ROOT%cv_layer"
-start "LightTable_CV" /B "%PYTHON_EXE%" main.py
+start "LightTable_CV" /B "%PYTHON_EXE%" main.py %*
 popd
 
 :: 3. Start Visual Layer (Foreground)
@@ -25,9 +25,6 @@ if exist %GODOT_EXE% (
     godot --main-scene res://scenes/main.tscn
 )
 
-:: 4. Shutdown Cleanup
+:: The CV process can be stopped from the authenticated remote.
 echo.
-echo Closing system...
-taskkill /FI "WINDOWTITLE eq LightTable_CV*" /T /F >nul 2>&1
-echo Done.
-pause
+echo Godot exited. CV and web remote continue running; stop them from the remote.

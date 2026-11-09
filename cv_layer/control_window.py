@@ -28,8 +28,7 @@ Pillow is absent (preview disabled, everything else still works).
 
 import tkinter as tk
 import cv2
-import json
-from pathlib import Path
+from app_settings import TRACKER_NAMES, SMOOTH_LABELS, RESOLUTIONS, load_settings as _load_settings
 
 try:
     from PIL import Image, ImageTk
@@ -40,21 +39,6 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Constants shared with main.py / camera_ui.py
 # ---------------------------------------------------------------------------
-TRACKER_NAMES = ["Hands", "Blob", "Motion", "Color", "Edge", "Object"]
-SMOOTH_LABELS = ["None", "EMA", "Kalman"]
-
-_SETTINGS_PATH = Path(__file__).parent.parent / "last_settings.json"
-
-# (display_label, cap_width, cap_height)
-RESOLUTIONS = [
-    ("160 × 120",   160,  120),
-    ("320 × 240",   320,  240),
-    ("640 × 480",   640,  480),
-    ("800 × 600",   800,  600),
-    ("1280 × 720", 1280,  720),
-    ("1920 × 1080",1920, 1080),
-]
-_DEFAULT_RES = "640 × 480"
 
 # ---------------------------------------------------------------------------
 # Colour palette (dark theme)
@@ -68,62 +52,6 @@ _ACC   = "#4db8ff"   # section headings
 _ACC2  = "#ffcc55"   # tracker-specific slider labels
 _BTN   = "#2d2d2d"
 _BTN_H = "#3a3a3a"
-
-
-def _load_settings(path=_SETTINGS_PATH):
-    defaults = {
-        "camera_idx": 0, "tracker_idx": 0, "smoothing_mode": 1,
-        "ema_alpha": 35, "resolution": _DEFAULT_RES, "brightness": 50,
-        "contrast": 50, "flip_h": False, "show_mask": False,
-        "target_fps": 30, "pointers_visible": True,
-        "motion_enabled": True, "motion_threshold": 25, "motion_min_percent": 1,
-        "motion_delay_ms": 50,
-    }
-    if path.exists():
-        try:
-            with open(path, encoding="utf-8") as settings_file:
-                saved = json.load(settings_file)
-            if isinstance(saved, dict):
-                defaults.update(saved)
-            else:
-                print("[ControlWindow] Settings must be a JSON object; using defaults")
-        except (OSError, ValueError, TypeError) as exc:
-            print(f"[ControlWindow] Settings could not be loaded: {exc}")
-
-    def bounded_int(key, default, low, high):
-        try:
-            return max(low, min(high, int(defaults.get(key, default))))
-        except (TypeError, ValueError):
-            print(f"[ControlWindow] Invalid {key} setting; using {default}")
-            return default
-
-    def safe_bool(key, default):
-        value = defaults.get(key, default)
-        if isinstance(value, bool):
-            return value
-        if value in (0, 1):
-            return bool(value)
-        if isinstance(value, str) and value.lower() in ("true", "false"):
-            return value.lower() == "true"
-        print(f"[ControlWindow] Invalid {key} setting; using {default}")
-        return default
-
-    defaults["camera_idx"] = bounded_int("camera_idx", 0, 0, 9)
-    defaults["tracker_idx"] = bounded_int("tracker_idx", 0, 0, len(TRACKER_NAMES) - 1)
-    defaults["smoothing_mode"] = bounded_int("smoothing_mode", 1, 0, len(SMOOTH_LABELS) - 1)
-    defaults["ema_alpha"] = bounded_int("ema_alpha", 35, 1, 95)
-    defaults["target_fps"] = bounded_int("target_fps", 30, 1, 60)
-    defaults["brightness"] = bounded_int("brightness", 50, 0, 100)
-    defaults["contrast"] = bounded_int("contrast", 50, 0, 100)
-    defaults["motion_threshold"] = bounded_int("motion_threshold", 25, 1, 100)
-    defaults["motion_min_percent"] = bounded_int("motion_min_percent", 1, 0, 20)
-    defaults["motion_delay_ms"] = bounded_int("motion_delay_ms", 50, 50, 1000)
-    for key in ("flip_h", "show_mask", "pointers_visible", "motion_enabled"):
-        defaults[key] = safe_bool(key, key in ("pointers_visible", "motion_enabled"))
-    if defaults.get("resolution") not in [resolution[0] for resolution in RESOLUTIONS]:
-        print("[ControlWindow] Invalid resolution setting; using default")
-        defaults["resolution"] = _DEFAULT_RES
-    return defaults
 
 
 class ControlWindow:
@@ -141,7 +69,7 @@ class ControlWindow:
     """
 
     # ------------------------------------------------------------------
-    def __init__(self):
+    def __init__(self, settings=None):
         self._root = tk.Tk()
         self._root.title("LightTable CV")
         self._root.configure(bg=_DARK)
@@ -154,7 +82,7 @@ class ControlWindow:
         self._preview_scale  = 1.0         # last scale used → click coord mapping
         self._pending_keys: list = []
 
-        defaults = _load_settings()
+        defaults = settings.values if settings is not None else _load_settings()
 
         # ── Global Tk variables ─────────────────────────────────────────────
         self._camera_var    = tk.IntVar(value=defaults["camera_idx"])
@@ -181,7 +109,6 @@ class ControlWindow:
         # External callback
         self._click_callback = None
         self._calibration_action_callback = None
-        self._last_saved_settings = None
 
         self._build_ui()
         self._root.bind_all("<KeyPress>", self._on_keypress)
@@ -407,11 +334,6 @@ class ControlWindow:
 
         for s in specs:
             var = tk.IntVar(value=s["default"])
-            # Bind: every slider move → tracker.on_trackbar(name, value)
-            var.trace_add(
-                "write",
-                lambda *_, n=s["name"], v=var, t=tracker: t.on_trackbar(n, v.get()),
-            )
             self._tracker_vars[s["name"]] = var
             self._add_slider(self._tracker_frame, s["name"], var, 0, s["max"], accent=True)
 
@@ -517,6 +439,42 @@ class ControlWindow:
         """False once the user closes the window."""
         return self._alive
 
+    def operator_settings(self, tracker):
+        variables = {
+            "camera": (self._camera_var, 0, 9), "brightness": (self._bright_var, 0, 100),
+            "contrast": (self._contrast_var, 0, 100), "ema": (self._ema_var, 1, 95),
+            "fps": (self._fps_var, 1, 60), "motion_threshold": (self._motion_threshold_var, 1, 100),
+            "motion_min": (self._motion_min_var, 0, 20), "motion_delay": (self._motion_delay_var, 50, 1000),
+        }
+        settings = {name: {"value": var.get(), "min": lo, "max": hi}
+                    for name, (var, lo, hi) in variables.items()}
+        for name, var in (("flip", self._fliph_var), ("motion", self._motion_var),
+                          ("pointers", self._pointers_var), ("show_mask", self._showmask_var)):
+            settings[name] = {"value": bool(var.get()), "type": "boolean"}
+        settings["resolution"] = {"value": self._res_var.get(), "options": [r[0] for r in RESOLUTIONS]}
+        settings["smoothing"] = {"value": self._smooth_var.get(), "options": list(SMOOTH_LABELS)}
+        settings["tracker"] = {"value": self._tracker_var.get(), "options": list(TRACKER_NAMES)}
+        specs = tracker.get_trackbar_settings()
+        tracker_settings = {spec["name"]: {"value": self._tracker_vars[spec["name"]].get(),
+                                          "min": 0, "max": spec["max"]}
+                            for spec in specs if spec["name"] in self._tracker_vars}
+        return {"settings": settings, "tracker_settings": tracker_settings, "tracker_name": tracker.name}
+
+    def apply_operator_settings(self, values, tracker_values):
+        variables = {
+            "camera": self._camera_var, "brightness": self._bright_var,
+            "contrast": self._contrast_var, "ema": self._ema_var, "fps": self._fps_var,
+            "motion_threshold": self._motion_threshold_var, "motion_min": self._motion_min_var,
+            "motion_delay": self._motion_delay_var, "flip": self._fliph_var,
+            "motion": self._motion_var, "pointers": self._pointers_var,
+            "show_mask": self._showmask_var, "resolution": self._res_var,
+            "smoothing": self._smooth_var, "tracker": self._tracker_var,
+        }
+        for name, value in values.items():
+            variables[name].set(value)
+        for name, value in tracker_values.items():
+            self._tracker_vars[name].set(value)
+
     # ------------------------------------------------------------------
     # Settings read
     # ------------------------------------------------------------------
@@ -553,32 +511,4 @@ class ControlWindow:
             "Preview Mode": self._preview_mode_var.get(),
             "_res_label":  rn
         }
-        self._save_settings(s)
         return s
-
-    def _save_settings(self, s: dict):
-        save_data = {
-            "camera_idx":       s["Camera Idx"],
-            "tracker_idx":      s["Tracker"],
-            "smoothing_mode":   s["Smoothing"],
-            "ema_alpha":        s["EMA Respons"],
-            "resolution":       s["_res_label"],
-            "brightness":       s["Brightness"],
-            "contrast":         s["Contrast"],
-            "flip_h":           bool(s["Flip H"]),
-            "show_mask":        bool(s["Show Mask"]),
-            "target_fps":       s["Target FPS"],
-            "pointers_visible": s["Pointers"],
-            "motion_enabled": s["Frame Motion"],
-            "motion_threshold": s["Motion Threshold"],
-            "motion_min_percent": s["Motion Min Percent"],
-            "motion_delay_ms": s["Motion Delay ms"],
-        }
-        if save_data == self._last_saved_settings:
-            return
-        try:
-            with open(_SETTINGS_PATH, "w") as f:
-                json.dump(save_data, f, indent=2)
-            self._last_saved_settings = save_data
-        except OSError as exc:
-            print(f"[ControlWindow] Settings could not be saved: {exc}")

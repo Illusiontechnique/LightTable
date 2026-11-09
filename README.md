@@ -8,6 +8,7 @@ LightTable is a portable interactive projection system. The Python/OpenCV layer 
 - `visual_layer/` — Godot project, UDP receiver, cursor layer, and interactive scenes.
 - `profiles.json` — player profiles managed by the web remote.
 - `last_settings.json` — last-used camera, tracker, image, and smoothing controls.
+- `environment_presets.json` — locally saved operator environment settings.
 - `remote_config.json` — web remote PIN and port. See [CONFIGURATION.md](./CONFIGURATION.md).
 - `cv_layer/calibration.json` — camera-specific calibration profiles, created when a profile is saved.
 
@@ -16,10 +17,12 @@ LightTable is a portable interactive projection system. The Python/OpenCV layer 
 1. Install Python 3.9+ and Godot 4.x.
 2. Install the CV dependencies: `python -m pip install -r cv_layer/requirements.txt`.
 3. Launch `visual_layer/project.godot` in Godot.
-4. Run `python cv_layer/main.py` from the repository root, or use `start.bat`.
-5. Connect a phone to the same LAN and open the URL printed by the Python process. The generated one-run PIN is printed on startup when the configured PIN is missing or still the insecure default.
+4. Run `python cv_layer/main.py` from the repository root, or use `start.bat`. The CV layer defaults to **headless**, with no Tkinter window. Use `python cv_layer/main.py --desktop` or `start.bat --desktop` to show the desktop controls; `--headless` explicitly selects headless mode.
+5. Connect a phone to the same LAN and open the URL printed by the Python process. A generated one-run PIN is printed on startup when no valid PIN is configured.
 
-OpenCV camera capture can fail temporarily without terminating the control panel; it retries the selected camera. The virtual interaction simulator can be run separately with `python cv_layer/simulate_hands.py`; it does not require a physical camera.
+OpenCV camera capture can fail temporarily without terminating the application; it retries the selected camera while the remote remains available. Closing the optional desktop window leaves the CV layer running. Use **Settings → Stop CV and remote** or **Restart CV and remote** in the authenticated remote, or Ctrl+C in the CV console. These actions do not stop Godot. Likewise, when Godot exits, the Windows launcher leaves the CV process running so it can be stopped cleanly from the remote. The virtual interaction simulator can be run separately with `python cv_layer/simulate_hands.py`; it does not require a physical camera.
+
+The saved `desktop` boolean in `last_settings.json` controls the default when no mode flag is supplied; the remote **desktop next start** setting changes it. An explicit command-line mode takes precedence, including after a remote restart. Existing settings remain compatible and are saved after changes settle. Godot, not the Python CV process, owns microphone capture and audio processing.
 
 ## Godot keyboard shortcuts
 
@@ -40,7 +43,7 @@ In the interactive menu, hold a pointer over a card for 2.2 seconds to select it
 
 ## Calibration
 
-Use the **Calibration** section in the desktop panel:
+Use the **Calibration** section in the remote or optional desktop panel:
 
 1. Select the camera, processing resolution, and horizontal-flip setting you will use.
 2. Choose **Start**, then click the projected region in the live preview in order: top-left, top-right, bottom-right, bottom-left.
@@ -48,6 +51,35 @@ Use the **Calibration** section in the desktop panel:
 4. Choose **Save** to persist the validated profile. Profiles are keyed by camera index, source and processing resolutions, and horizontal flip.
 
 Only a profile matching the current camera configuration is applied. Existing matrix-only calibration files do not contain enough information to verify compatibility and are deliberately not auto-applied; recalibrate and save a profile instead. Resolution, camera, or flip changes clear the active transform unless a matching saved profile is available.
+
+## Operator remote
+
+After signing in, use **Play** for scenes and players, **Tracking** for camera, image, motion and tracker-specific controls, **Calibration** for corner selection, **Diagnostics** for previews and microphone monitoring, and **Settings** for environment presets. Changes go through the desktop controls and are reflected in both interfaces. Tracker-specific controls are rebuilt for the active tracker; an unavailable camera or tracker may not switch successfully.
+
+In Diagnostics select adjusted camera, tracking overlay, or thresholded motion intensity. Previews reuse the active capture and are encoded once for all viewers, on demand, at up to 320 × 240 and 5 fps; choose 2 or 1 fps on a slower connection. Stop viewing or switch tabs to stop requesting frames. In Calibration, select **Start**, tap the four corners in order on the camera overlay, then **Save**. **Undo**, **Cancel**, **Reset**, and loading a compatible saved profile are also available. A stale camera-configuration preview cannot submit points.
+
+For the Object tracker, use **Diagnostics → Select object** and tap the top-left and bottom-right corners on the adjusted camera preview; the selection is initialized on the next captured frame. **Clear objects** removes tracked objects. In desktop mode the existing `a` and `x` shortcuts remain available.
+
+The microphone meters show Godot's measured input and its actual smoothed, floor/ceiling-mapped scene level. Yellow markers show the floor and ceiling on the input meter; adjust them while making sound. “No input frames” or “unavailable” is not a measured zero. Silence and a muted microphone cannot always be distinguished from samples alone. Godot must be running on the same host as the CV layer for the local audio telemetry.
+
+Use **Settings → Save current** to name a preset; load, rename, and delete it there. Presets include the active tracking parameters and confirmed Godot audio range. Saving or loading requires current Godot telemetry. They record camera configuration, but do not copy or force calibration: the normal calibration system loads a saved profile only when camera index, source and processing resolution, and flip match. Select a compatible calibration profile or recalibrate if the setup changes.
+
+The remote is intended for a trusted private LAN: previews and controls require login, but HTTP is not encrypted. A short PIN such as `1234` is easy to guess. See [CONFIGURATION.md](./CONFIGURATION.md) for security and persistence details.
+
+## Synthetic performance check
+
+Run `python cv_layer/benchmark_operator.py` and repeat with `--preview`, `--desktop`, and `--desktop --preview`. This runs synthetic 640 × 480 frames through Edge tracking and frame motion at a 30 fps target, without a camera, Flask, Godot, or audio. `cpu_percent_one_core` is process CPU time divided by wall time (100% means one core); the Windows memory number is the process working set. `processing_fps` measures the `process_frame` section only, while `fps` includes the 30 fps pacing.
+
+One 8-second run per configuration on the development Windows laptop produced:
+
+| Mode | Preview | CPU, one core | Working set | Processing FPS | Paced FPS |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Headless | Off | 45.51% | 101.59 MiB | 372.70 | 29.38 |
+| Headless | Web overlay | 41.99% | 104.76 MiB | 340.19 | 29.38 |
+| Desktop | Off | 74.66% | 112.50 MiB | 273.37 | 28.70 |
+| Desktop | On | 86.33% | 121.88 MiB | 188.50 | 27.75 |
+
+These are short synthetic observations, not a mini-PC or full-system benchmark; CPU variation explains why the headless preview sample is lower than the no-preview sample. Actual camera capture, MediaPipe, UDP, audio, browser clients, and Godot can change the results. Remaining per-frame work includes tracker and frame-difference analysis, interaction association, UDP output, and operator status snapshots; JPEG encoding is skipped when no preview is requested.
 
 ## Tracking and interaction contract
 

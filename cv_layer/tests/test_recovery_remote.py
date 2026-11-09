@@ -68,6 +68,19 @@ class RemoteTests(unittest.TestCase):
         self.assertEqual(len(config["pin"]), 6)
         self.assertNotEqual(config["pin"], "1234")
 
+    def test_explicit_four_digit_pin_is_used_for_login(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "remote.json"
+            path.write_text(json.dumps({"pin": "1234"}))
+            with patch("web_remote._CFG_PATH", path):
+                remote = WebRemote(self.state)
+        self.assertFalse(remote._cfg["generated_pin"])
+        app = remote._create_app()
+        app.testing = True
+        response = app.test_client().post("/login", json={"pin": "1234"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["ok"])
+
     def test_desktop_settings_loading_sanitizes_invalid_values(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "settings.json"

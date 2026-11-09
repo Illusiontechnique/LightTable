@@ -67,6 +67,7 @@ class CalibrationTests(unittest.TestCase):
         calibration.save()
         reloaded = Calibration(self.path)
         self.assertTrue(reloaded.set_context(self.signature))
+        self.assertTrue(reloaded.list_profiles()[0]["compatible"])
         self.assertEqual(reloaded.state, Calibration.CALIBRATED)
         self.assertEqual(reloaded.points, [list(point) for point in self.points])
         reloaded.reset()
@@ -75,6 +76,7 @@ class CalibrationTests(unittest.TestCase):
 
         incompatible = Calibration.make_signature(0, (1280, 720), (640, 480), True)
         self.assertFalse(reloaded.set_context(incompatible))
+        self.assertFalse(reloaded.list_profiles()[0]["compatible"])
         self.assertIsNone(reloaded.matrix)
         self.assertEqual(reloaded.state, Calibration.ERROR)
 

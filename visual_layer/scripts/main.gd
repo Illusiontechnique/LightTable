@@ -27,6 +27,8 @@ var audio_input_floor := 0.01
 var audio_input_ceiling := 0.18
 var audio_raw_level := 0.0
 var audio_level := 0.0
+var audio_input_available := false
+var audio_last_sample_time := -100.0
 var welcome_overlay: Control
 var welcome_status_label: Label
 var welcome_timer := 0.0
@@ -255,6 +257,7 @@ func setup_audio_ui():
 func setup_audio_sensor():
 	ProjectSettings.set_setting("audio/driver/enable_input", true)
 	var error_code = AudioServer.set_input_device_active(true)
+	audio_input_available = error_code == OK
 	if error_code == OK:
 		audio_meter_label.text = "Mic: active"
 		log_message("Audio input enabled.")
@@ -427,14 +430,15 @@ func update_audio_sensor():
 			audio_meter_label.text = "Mic raw: " + str(snapped(audio_raw_level, 0.001)) + " | norm: " + str(snapped(audio_level, 0.001))
 		return
 
+	audio_last_sample_time = Time.get_ticks_msec() * 0.001
+
 	var total_energy := 0.0
 	for sample in frames:
 		total_energy += abs(sample.x) + abs(sample.y)
 
 	var raw_level = clamp((total_energy / float(frames.size())) * 0.9, 0.0, 1.0)
 	audio_raw_level = lerp(audio_raw_level, raw_level, 0.25)
-	var ceiling = max(audio_input_ceiling, audio_input_floor + 0.001)
-	var normalized_level = clamp(inverse_lerp(audio_input_floor, ceiling, audio_raw_level), 0.0, 1.0)
+	var normalized_level = map_audio_level(audio_raw_level)
 	audio_level = lerp(audio_level, normalized_level, 0.25)
 	if audio_meter_bar:
 		audio_meter_bar.value = audio_level
@@ -444,6 +448,10 @@ func update_audio_sensor():
 		audio_floor_label.text = "Floor: " + str(snapped(audio_input_floor, 0.001))
 	if audio_ceiling_label:
 		audio_ceiling_label.text = "Ceiling: " + str(snapped(audio_input_ceiling, 0.001))
+
+func map_audio_level(raw: float) -> float:
+	var ceiling := maxf(audio_input_ceiling, audio_input_floor + 0.001)
+	return clampf(inverse_lerp(audio_input_floor, ceiling, raw), 0.0, 1.0)
 
 func _on_audio_floor_changed(value: float):
 	audio_input_floor = clamp(value, 0.0, 0.999)
@@ -818,7 +826,13 @@ func _on_remote_command(cmd: Dictionary) -> void:
 		"clear_cursors":
 			_on_clear_interactions_pressed()
 			log_message("Remote: cursors cleared")
-	receiver.send_status(active_scene_label, str(cmd.get("request_id", "")))
+	receiver.send_status(active_scene_label, str(cmd.get("request_id", "")), {
+		"audio_raw": audio_raw_level,
+		"audio_level": audio_level,
+		"audio_floor": audio_input_floor,
+		"audio_ceil": audio_input_ceiling,
+		"audio_status": "unavailable" if not audio_input_available else ("active" if Time.get_ticks_msec() * 0.001 - audio_last_sample_time < 1.0 else "no input frames"),
+	})
 
 func _on_interaction_received(id: int, pos: Vector2, state: String, metadata: Dictionary = {}):
 	if state == "exit":
