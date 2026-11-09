@@ -11,6 +11,7 @@ uniform float motion_sensitivity : hint_range(0.0, 10.0) = 2.0;
 uniform float impulse_strength : hint_range(0.0, 0.5) = 0.04;
 uniform float max_disturbance : hint_range(0.01, 1.0) = 0.35;
 uniform float motion_enabled = 0.0;
+uniform bool motion_edges = false;
 uniform int test_pattern = 0;
 uniform float test_time = 0.0;
 uniform float test_impulse = 0.0;
@@ -26,7 +27,16 @@ void fragment() {
 		+ texture(state_texture, UV - vec2(texel_size.x, 0.0)).r
 		+ texture(state_texture, UV + vec2(0.0, texel_size.y)).r
 		+ texture(state_texture, UV - vec2(0.0, texel_size.y)).r - 4.0 * state.r;
-	float motion = max(texture(motion_texture, UV).r - motion_threshold, 0.0) * motion_sensitivity;
+	float intensity = texture(motion_texture, UV).r;
+	float motion = max(intensity - motion_threshold, 0.0) * motion_sensitivity;
+	if (motion_edges) {
+		vec2 pixel = vec2(1.0 / 160.0, 1.0 / 120.0);
+		vec2 gradient = vec2(
+			texture(motion_texture, UV + vec2(pixel.x, 0.0)).r - texture(motion_texture, UV - vec2(pixel.x, 0.0)).r,
+			texture(motion_texture, UV + vec2(0.0, pixel.y)).r - texture(motion_texture, UV - vec2(0.0, pixel.y)).r
+		);
+		motion = max(length(gradient) - motion_threshold, 0.0) * motion_sensitivity;
+	}
 	float impulse = min(motion, max_disturbance) * impulse_strength * motion_enabled;
 	if (test_pattern == 1) {
 		impulse += spot(UV, vec2(0.5), 0.05) * test_impulse;

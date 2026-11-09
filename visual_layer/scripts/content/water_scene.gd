@@ -49,6 +49,9 @@ func _resize_surface() -> void:
 func set_audio_level(level: float) -> void:
 	audio_level = clampf(level, 0.0, 1.0)
 
+func uses_point_cursors() -> bool:
+	return false
+
 
 func _process(_delta: float) -> void:
 	water_material.set_shader_parameter("height_texture", simulation.get_height_texture())

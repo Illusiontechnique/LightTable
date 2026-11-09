@@ -15,6 +15,7 @@ const SIM_SHADER := preload("res://shaders/water_simulation.gdshader")
 @export_range(0.0, 10.0) var motion_sensitivity := 2.0
 @export_range(0.0, 0.5) var impulse_strength := 0.04
 @export_range(0.01, 1.0) var max_disturbance := 0.35
+@export var motion_edges := false
 
 var motion_image: Image
 var motion_texture: ImageTexture
@@ -154,6 +155,7 @@ func _process(delta: float) -> void:
 	material.set_shader_parameter("damping", clampf(damping, 0.9, 0.9999))
 	material.set_shader_parameter("motion_threshold", motion_threshold)
 	material.set_shader_parameter("motion_sensitivity", motion_sensitivity)
+	material.set_shader_parameter("motion_edges", motion_edges)
 	material.set_shader_parameter("impulse_strength", impulse_strength)
 	material.set_shader_parameter("max_disturbance", max_disturbance)
 	material.set_shader_parameter("motion_enabled", 1.0 if test_pattern == 0 and _pending_motion and now - last_packet_time < STALE_SECONDS else 0.0)

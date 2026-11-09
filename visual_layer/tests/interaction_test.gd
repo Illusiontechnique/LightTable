@@ -104,6 +104,8 @@ func _run() -> void:
 	if not _check(app.load_content_scene("res://scripts/content/water_scene.gd"), "Water failed to load"):
 		return
 	var water = app.active_scene
+	if not _check(not app.cursor_draw_layer.visible, "Water should hide point cursors"):
+		return
 	if not _check(water.simulation.bind_error == OK, "Water binary motion port must bind"):
 		return
 	_press_key(water, KEY_F3)
@@ -145,6 +147,15 @@ func _run() -> void:
 	if not _check(app.load_content_scene("res://scripts/content/water_scene.gd"), "Water must reload"):
 		return
 	if not _check(app.active_scene.simulation.bind_error == OK, "Water reload must release and rebind UDP"):
+		return
+	if not _check(app.load_content_scene("res://scripts/content/edge_reveal_scene.gd"), "Edge Reveal failed to load"):
+		return
+	var edge = app.active_scene
+	if not _check(edge.simulation.bind_error == OK and edge.simulation.motion_edges and not app.cursor_draw_layer.visible,
+			"Edge Reveal must use image edges and hide point cursors"):
+		return
+	if not _check(app.load_content_scene("res://scripts/content/menu_scene.gd") and app.cursor_draw_layer.visible,
+			"Point cursors must be restored in other scenes"):
 		return
 	if not _check(app.load_content_scene("res://scripts/content/spinner_scene.gd"), "Spinner failed to load"):
 		return

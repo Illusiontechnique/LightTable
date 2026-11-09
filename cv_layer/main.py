@@ -259,6 +259,38 @@ class LightTableCV:
             self._send({"type": "frame_motion", "amount": 0.0, "points": []})
         self._motion_enabled = motion_enabled
 
+        preview_mode = settings.get("Preview Mode", "Camera")
+        if self.calibration.state not in (Calibration.SELECTING, Calibration.VALIDATING):
+            if preview_mode == "Motion (camera)":
+                preview = self.frame_motion.latest_intensity
+            elif preview_mode == "Motion (projected)":
+                calibrated = self.calibration.state == Calibration.CALIBRATED
+                data = self.frame_motion.projection_frame(
+                    self._current_res,
+                    self.calibration.matrix if calibrated else None,
+                    self.calibration.target_size if calibrated else None,
+                )
+                preview = np.frombuffer(data, dtype=np.uint8).reshape(
+                    self.frame_motion.size[1], self.frame_motion.size[0]
+                )
+            else:
+                preview = None
+            if preview is not None:
+                preview_size = self._current_res
+                if preview_mode == "Motion (projected)":
+                    target_w, target_h = self.calibration.target_size
+                    preview_size = (self._current_res[0],
+                                    max(1, round(self._current_res[0] * target_h / target_w)))
+                display = cv2.cvtColor(
+                    cv2.resize(preview, preview_size, interpolation=cv2.INTER_NEAREST),
+                    cv2.COLOR_GRAY2BGR,
+                )
+                label = preview_mode if motion_enabled else "Frame motion disabled"
+                if preview_mode == "Motion (projected)" and self.calibration.state != Calibration.CALIBRATED:
+                    label += " - uncalibrated"
+                cv2.putText(display, label, (10, 25), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.55, (0, 220, 255), 1)
+
         # 6. Send hand skeleton landmarks (HandTracker only, throttled to ~20 fps)
         if isinstance(self.tracker, HandTracker):
             now = time.time()

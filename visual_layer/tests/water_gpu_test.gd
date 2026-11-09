@@ -169,4 +169,50 @@ func _run() -> void:
 		surface.save_png(screenshot)
 	print("GPU water presentation rendered: ", sample)
 	scene.queue_free()
+	await process_frame
+	var edge := Node2D.new()
+	edge.set_script(load("res://scripts/content/edge_reveal_scene.gd"))
+	root.add_child(edge)
+	for i in 6:
+		await process_frame
+	var edge_image := Image.create(160, 120, false, Image.FORMAT_L8)
+	edge_image.fill(Color.BLACK)
+	edge_image.fill_rect(Rect2i(45, 40, 50, 40), Color.WHITE)
+	var edge_sender := PacketPeerUDP.new()
+	edge_sender.set_dest_address("127.0.0.1", 4242)
+	edge_sender.put_packet(edge_image.get_data())
+	for i in 12:
+		await process_frame
+	await RenderingServer.frame_post_draw
+	var echo: Image = edge.simulation.get_height_texture().get_image()
+	var boundary := _peak_near(echo, Vector2(45.0 / 160.0, 60.0 / 120.0), 8)
+	var outside := _peak_near(echo, Vector2(38.0 / 160.0, 60.0 / 120.0), 3)
+	var interior := _peak_near(echo, Vector2(70.0 / 160.0, 60.0 / 120.0), 4)
+	print("Edge GPU boundary / outside / interior: ", boundary, " / ", outside, " / ", interior)
+	if boundary < 0.001 or outside < 0.0001 or interior > boundary * 0.2:
+		push_error("Motion image edges must produce outward waves, not filled regions")
+		quit(1)
+		return
+	edge.set_audio_level(1.0)
+	edge._process(0.5)
+	if edge.effect_material.get_shader_parameter("audio_level") < 0.9:
+		push_error("Edge effect must respond to audio level")
+		quit(1)
+		return
+	await process_frame
+	await RenderingServer.frame_post_draw
+	var rainbow_image := root.get_texture().get_image()
+	var rainbow_peak := 0.0
+	var chroma_peak := 0.0
+	for y in range(0, rainbow_image.get_height(), 12):
+		for x in range(0, rainbow_image.get_width(), 12):
+			var color := rainbow_image.get_pixel(x, y)
+			rainbow_peak = maxf(rainbow_peak, maxf(color.r, maxf(color.g, color.b)))
+			chroma_peak = maxf(chroma_peak, maxf(color.r, maxf(color.g, color.b)) - minf(color.r, minf(color.g, color.b)))
+	if rainbow_peak < 0.15 or chroma_peak < 0.1:
+		push_error("Edge presentation did not render a visible rainbow")
+		quit(1)
+		return
+	edge_sender.close()
+	edge.queue_free()
 	quit(0)

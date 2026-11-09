@@ -49,6 +49,14 @@ class InteractionPipelineTests(unittest.TestCase):
             app.process_frame(frame, settings, 1.1)
             self.assertEqual(app._send.call_args.args[0]["amount"], 0.0)
             app.process_frame(frame, settings, 1.2)
+            settings["Preview Mode"] = "Motion (projected)"
+            projected_preview = app.process_frame(frame, settings, 1.25)
+            self.assertEqual(projected_preview.shape, (180, 320, 3))
+            self.assertGreater(int(projected_preview[50:150, 40:200].max()), 0)
+            settings["Preview Mode"] = "Motion (camera)"
+            camera_preview = app.process_frame(frame, settings, 1.26)
+            self.assertEqual(camera_preview.shape, (240, 320, 3))
+            self.assertGreater(int(camera_preview[50:180, 40:180].max()), 0)
             packets = [call.args[0] for call in app._send.call_args_list]
             interaction = next(p for p in packets if p["type"] == "interaction")
             motion = [p for p in packets if p["type"] == "frame_motion"][-1]

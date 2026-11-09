@@ -172,6 +172,7 @@ class ControlWindow:
         self._motion_threshold_var = tk.IntVar(value=defaults["motion_threshold"])
         self._motion_min_var = tk.IntVar(value=defaults["motion_min_percent"])
         self._motion_delay_var = tk.IntVar(value=defaults["motion_delay_ms"])
+        self._preview_mode_var = tk.StringVar(value="Camera")
 
         # Tracker-specific slider vars: {name: IntVar}
         self._tracker_vars: dict   = {}
@@ -232,6 +233,10 @@ class ControlWindow:
             command=self._toggle_preview,
         )
         self._preview_btn.pack(fill="x", pady=(4, 0))
+        preview_modes = ("Camera", "Motion (camera)", "Motion (projected)")
+        preview_menu = tk.OptionMenu(left, self._preview_mode_var, *preview_modes)
+        self._style_menu(preview_menu)
+        preview_menu.pack(fill="x", pady=(4, 0))
 
         # Pillow warning if missing
         if not _PIL_OK:
@@ -545,6 +550,7 @@ class ControlWindow:
             "Motion Threshold": self._motion_threshold_var.get(),
             "Motion Min Percent": self._motion_min_var.get(),
             "Motion Delay ms": self._motion_delay_var.get(),
+            "Preview Mode": self._preview_mode_var.get(),
             "_res_label":  rn
         }
         self._save_settings(s)

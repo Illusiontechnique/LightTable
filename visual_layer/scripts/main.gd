@@ -607,6 +607,11 @@ func load_content_scene(script_path: String):
 	move_child(new_node, 0) # Keep it behind UI
 	active_scene = new_node
 	background.visible = false
+	if cursor_draw_layer:
+		cursor_draw_layer.visible = not (
+			active_scene.has_method("uses_point_cursors")
+			and not active_scene.call("uses_point_cursors")
+		)
 
 	# Notify new scene of current quality level
 	if active_scene.has_method("set_quality_level"):
