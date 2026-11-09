@@ -55,6 +55,30 @@ class FrameMotionTests(unittest.TestCase):
         self.assertGreater(warped[40, 120], 0)
         self.assertEqual(warped[40, 40], 0)
 
+    def test_comparison_delay_uses_older_frame_without_changing_send_rate(self):
+        frame = self.blank.copy()
+        cv2.rectangle(frame, (60, 60), (160, 160), (255, 255, 255), -1)
+        self.motion.update(self.blank, 0.0, comparison_delay_ms=200)
+        self.assertEqual(self.motion.update(frame, 0.1, comparison_delay_ms=200)["amount"], 0.0)
+        self.assertGreater(self.motion.update(frame, 0.2, comparison_delay_ms=200)["amount"], 0.1)
+        self.assertEqual(self.motion.update(frame, 0.3, comparison_delay_ms=200)["amount"], 0.0)
+
+    def test_delay_changes_use_retained_history_and_reset_discards_it(self):
+        frame = self.blank.copy()
+        cv2.rectangle(frame, (60, 60), (160, 160), (255, 255, 255), -1)
+        self.motion.update(self.blank, 0.0)
+        self.motion.update(frame, 0.1)
+        self.assertEqual(self.motion.update(frame, 0.2)["amount"], 0.0)
+        self.assertGreater(self.motion.update(frame, 0.3, comparison_delay_ms=300)["amount"], 0.1)
+        self.motion.reset()
+        self.assertEqual(self.motion.update(frame, 0.4, comparison_delay_ms=300)["amount"], 0.0)
+
+    def test_history_is_bounded_and_uses_actual_sample_times(self):
+        for i in range(100):
+            self.motion.update(self.blank, i * 0.1, comparison_delay_ms=1000)
+        self.assertLessEqual(len(self.motion.history), 12)
+        self.assertGreaterEqual(9.9 - self.motion.history[0][0], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

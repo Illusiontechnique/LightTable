@@ -77,6 +77,7 @@ def _load_settings(path=_SETTINGS_PATH):
         "contrast": 50, "flip_h": False, "show_mask": False,
         "target_fps": 30, "pointers_visible": True,
         "motion_enabled": True, "motion_threshold": 25, "motion_min_percent": 1,
+        "motion_delay_ms": 50,
     }
     if path.exists():
         try:
@@ -116,6 +117,7 @@ def _load_settings(path=_SETTINGS_PATH):
     defaults["contrast"] = bounded_int("contrast", 50, 0, 100)
     defaults["motion_threshold"] = bounded_int("motion_threshold", 25, 1, 100)
     defaults["motion_min_percent"] = bounded_int("motion_min_percent", 1, 0, 20)
+    defaults["motion_delay_ms"] = bounded_int("motion_delay_ms", 50, 50, 1000)
     for key in ("flip_h", "show_mask", "pointers_visible", "motion_enabled"):
         defaults[key] = safe_bool(key, key in ("pointers_visible", "motion_enabled"))
     if defaults.get("resolution") not in [resolution[0] for resolution in RESOLUTIONS]:
@@ -169,6 +171,7 @@ class ControlWindow:
         self._motion_var    = tk.BooleanVar(value=defaults["motion_enabled"])
         self._motion_threshold_var = tk.IntVar(value=defaults["motion_threshold"])
         self._motion_min_var = tk.IntVar(value=defaults["motion_min_percent"])
+        self._motion_delay_var = tk.IntVar(value=defaults["motion_delay_ms"])
 
         # Tracker-specific slider vars: {name: IntVar}
         self._tracker_vars: dict   = {}
@@ -300,6 +303,7 @@ class ControlWindow:
         ).pack(anchor="w")
         self._add_slider(right, "Threshold", self._motion_threshold_var, 1, 100)
         self._add_slider(right, "Min area %", self._motion_min_var, 0, 20)
+        self._add_slider(right, "Delay ms", self._motion_delay_var, 50, 1000)
 
         self._sep(right)
         self._add_section_label(right, "CALIBRATION")
@@ -540,6 +544,7 @@ class ControlWindow:
             "Frame Motion": self._motion_var.get(),
             "Motion Threshold": self._motion_threshold_var.get(),
             "Motion Min Percent": self._motion_min_var.get(),
+            "Motion Delay ms": self._motion_delay_var.get(),
             "_res_label":  rn
         }
         self._save_settings(s)
@@ -561,6 +566,7 @@ class ControlWindow:
             "motion_enabled": s["Frame Motion"],
             "motion_threshold": s["Motion Threshold"],
             "motion_min_percent": s["Motion Min Percent"],
+            "motion_delay_ms": s["Motion Delay ms"],
         }
         if save_data == self._last_saved_settings:
             return

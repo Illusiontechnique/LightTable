@@ -41,12 +41,14 @@ class InteractionPipelineTests(unittest.TestCase):
             app._last_udp_ok = None
             app._send = Mock()
             settings = {"Smoothing": 0, "EMA Respons": 35, "Show Mask": 0,
-                        "Frame Motion": True}
+                        "Frame Motion": True, "Motion Delay ms": 200}
             blank = np.zeros((240, 320, 3), dtype=np.uint8)
             app.process_frame(blank, settings, 1.0)
             frame = blank.copy()
             cv2.rectangle(frame, (60, 60), (160, 160), (255, 255, 255), -1)
             app.process_frame(frame, settings, 1.1)
+            self.assertEqual(app._send.call_args.args[0]["amount"], 0.0)
+            app.process_frame(frame, settings, 1.2)
             packets = [call.args[0] for call in app._send.call_args_list]
             interaction = next(p for p in packets if p["type"] == "interaction")
             motion = [p for p in packets if p["type"] == "frame_motion"][-1]

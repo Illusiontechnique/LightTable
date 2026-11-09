@@ -78,6 +78,7 @@ class RemoteTests(unittest.TestCase):
                 "target_fps": 120,
                 "resolution": "unsupported",
                 "flip_h": "false",
+                "motion_delay_ms": 2000,
             }))
             settings = _load_settings(path)
         self.assertEqual(settings["camera_idx"], 0)
@@ -86,6 +87,7 @@ class RemoteTests(unittest.TestCase):
         self.assertEqual(settings["target_fps"], 60)
         self.assertEqual(settings["resolution"], "640 × 480")
         self.assertFalse(settings["flip_h"])
+        self.assertEqual(settings["motion_delay_ms"], 1000)
 
 
 class CameraSwitchTests(unittest.TestCase):

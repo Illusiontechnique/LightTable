@@ -8,6 +8,8 @@ The processing resolution is a software resize after capture. The camera's repor
 
 Frame differencing is controlled by `motion_enabled` (default `true`), `motion_threshold` (1–100, default 25), and `motion_min_percent` (0–20, default 1). These can also be changed in the **Frame Motion** section of the desktop panel. Higher thresholds reject weaker pixel changes; higher minimum percentages reject smaller changed regions. Changes in projected content or room lighting may be detected as motion. The signal runs alongside the selected tracker and is separate from the Motion tracker.
 
+`motion_delay_ms` selects the comparison age in milliseconds (50–1000, default 50). The most recent sampled frame at least that old is used, so the actual age depends on processing rate. No motion is emitted until enough history exists after a reset. Longer delays help detect slower movement but can extend motion after an object stops; the output update rate remains unchanged.
+
 For Water, the CV layer sends intensity frames over UDP port 4242 to the same host as the JSON bridge. The 19,200-byte L8 image is already warped into projector space if a compatible calibration is active; receivers must not apply calibration again. Without calibration it is normalized across the full camera frame. In Water, F3 opens session-only GPU simulation, appearance, grid, and test controls; 0 restores live input. Use Forward+ or Mobile for HDR 2D and avoid exposing the unauthenticated UDP ports outside a trusted network.
 
 ## Calibration profiles

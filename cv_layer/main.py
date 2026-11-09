@@ -244,6 +244,7 @@ class LightTableCV:
             motion = self.frame_motion.update(
                 frame, timestamp, settings.get("Motion Threshold", 25),
                 settings.get("Motion Min Percent", 1), region,
+                comparison_delay_ms=settings.get("Motion Delay ms", 50),
             )
             if motion is not None:
                 self._send_motion_frame()
