@@ -76,6 +76,7 @@ def _load_settings(path=_SETTINGS_PATH):
         "ema_alpha": 35, "resolution": _DEFAULT_RES, "brightness": 50,
         "contrast": 50, "flip_h": False, "show_mask": False,
         "target_fps": 30, "pointers_visible": True,
+        "motion_enabled": True, "motion_threshold": 25, "motion_min_percent": 1,
     }
     if path.exists():
         try:
@@ -113,8 +114,10 @@ def _load_settings(path=_SETTINGS_PATH):
     defaults["target_fps"] = bounded_int("target_fps", 30, 1, 60)
     defaults["brightness"] = bounded_int("brightness", 50, 0, 100)
     defaults["contrast"] = bounded_int("contrast", 50, 0, 100)
-    for key in ("flip_h", "show_mask", "pointers_visible"):
-        defaults[key] = safe_bool(key, key == "pointers_visible")
+    defaults["motion_threshold"] = bounded_int("motion_threshold", 25, 1, 100)
+    defaults["motion_min_percent"] = bounded_int("motion_min_percent", 1, 0, 20)
+    for key in ("flip_h", "show_mask", "pointers_visible", "motion_enabled"):
+        defaults[key] = safe_bool(key, key in ("pointers_visible", "motion_enabled"))
     if defaults.get("resolution") not in [resolution[0] for resolution in RESOLUTIONS]:
         print("[ControlWindow] Invalid resolution setting; using default")
         defaults["resolution"] = _DEFAULT_RES
@@ -163,6 +166,9 @@ class ControlWindow:
         self._res_var       = tk.StringVar(value=defaults["resolution"])
         self._fps_var       = tk.IntVar(value=defaults["target_fps"])
         self._pointers_var  = tk.BooleanVar(value=defaults["pointers_visible"])
+        self._motion_var    = tk.BooleanVar(value=defaults["motion_enabled"])
+        self._motion_threshold_var = tk.IntVar(value=defaults["motion_threshold"])
+        self._motion_min_var = tk.IntVar(value=defaults["motion_min_percent"])
 
         # Tracker-specific slider vars: {name: IntVar}
         self._tracker_vars: dict   = {}
@@ -285,6 +291,15 @@ class ControlWindow:
                 bg=_DARK, fg=_TXT2, selectcolor="#333",
                 activebackground=_DARK, font=("Helvetica", 9),
             ).pack(side="left", padx=(0, 10))
+
+        self._add_section_label(right, "FRAME MOTION")
+        tk.Checkbutton(
+            right, text="Enable frame differencing", variable=self._motion_var,
+            bg=_DARK, fg=_TXT2, selectcolor="#333", activebackground=_DARK,
+            font=("Helvetica", 9),
+        ).pack(anchor="w")
+        self._add_slider(right, "Threshold", self._motion_threshold_var, 1, 100)
+        self._add_slider(right, "Min area %", self._motion_min_var, 0, 20)
 
         self._sep(right)
         self._add_section_label(right, "CALIBRATION")
@@ -524,6 +539,9 @@ class ControlWindow:
             "Resolution":  (res_entry[1], res_entry[2]),
             "Target FPS":  max(1, self._fps_var.get()),
             "Pointers":    self._pointers_var.get(),
+            "Frame Motion": self._motion_var.get(),
+            "Motion Threshold": self._motion_threshold_var.get(),
+            "Motion Min Percent": self._motion_min_var.get(),
             "_res_label":  rn
         }
         self._save_settings(s)
@@ -542,6 +560,9 @@ class ControlWindow:
             "show_mask":        bool(s["Show Mask"]),
             "target_fps":       s["Target FPS"],
             "pointers_visible": s["Pointers"],
+            "motion_enabled": s["Frame Motion"],
+            "motion_threshold": s["Motion Threshold"],
+            "motion_min_percent": s["Motion Min Percent"],
         }
         if save_data == self._last_saved_settings:
             return

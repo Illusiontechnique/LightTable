@@ -3,23 +3,21 @@ extends Node2D
 # ─────────────────────────────────────────────────────────────────────────────
 #  Water Scene
 #  Drives the stylised water shader with:
-#    • Up to 8 simultaneous touch ripples (velocity-aware spawning)
+#    • Up to 8 simultaneous ripples from camera frame differences
 #    • Audio-reactive wave energy
 #    • Correct aspect-ratio compensation passed to the shader
 # ─────────────────────────────────────────────────────────────────────────────
 
 const MAX_RIPPLES     := 8
 const RIPPLE_LIFETIME := 3.2    # seconds before a ripple fades out completely
-const MOVE_THRESHOLD  := 14.0   # pixels moved before a travel ripple is spawned
 
 var water_surface  : ColorRect
 var water_material : ShaderMaterial
 
 # Active ripple ring-buffer.  Each entry: { pos: Vector2, age: float, strength: float }
 var active_ripples : Array = []
-
-# touch ID → last known pixel position (for velocity-based ripple spawning)
-var prev_positions : Dictionary = {}
+var _motion_ripple_cooldown := 0.0
+var _motion_point_index := 0
 
 # Audio
 var audio_level   : float = 0.0
@@ -56,7 +54,7 @@ func _ready() -> void:
 
 	# UI labels
 	_label("WATER",                                        36, Color(0.80, 1.00, 1.00),       Vector2(24, 18))
-	_label("Touch the surface · audio drives wave energy", 15, Color(0.70, 0.90, 1.00, 0.80), Vector2(24, 64))
+	_label("Move over the surface · camera motion makes ripples", 15, Color(0.70, 0.90, 1.00, 0.80), Vector2(24, 64))
 
 
 func _label(text: String, size: int, col: Color, pos: Vector2) -> void:
@@ -86,6 +84,14 @@ func _on_viewport_size_changed() -> void:
 func set_audio_level(level: float) -> void:
 	audio_level = clamp(level, 0.0, 1.0)
 
+func on_frame_motion(amount: float, points: Array) -> void:
+	if points.is_empty() or _motion_ripple_cooldown > 0.0:
+		return
+	for i in mini(2, points.size()):
+		spawn_ripple(points[(_motion_point_index + i) % points.size()], 0.45 + minf(amount * 3.0, 1.0))
+	_motion_point_index = (_motion_point_index + 2) % points.size()
+	_motion_ripple_cooldown = 0.3
+
 
 func spawn_ripple(uv_pos: Vector2, strength: float) -> void:
 	if active_ripples.size() >= MAX_RIPPLES:
@@ -100,6 +106,7 @@ func spawn_ripple(uv_pos: Vector2, strength: float) -> void:
 
 func _process(delta: float) -> void:
 	var vp := get_viewport_rect().size
+	_motion_ripple_cooldown = maxf(0.0, _motion_ripple_cooldown - delta)
 
 	# ── Aspect ratio (update each frame in case of resize) ─────────────
 	if vp.y > 0.0:
@@ -122,36 +129,3 @@ func _process(delta: float) -> void:
 		arr.append(Vector4(0.0, 0.0, -1.0, 0.0))
 	water_material.set_shader_parameter("ripples",      arr)
 	water_material.set_shader_parameter("ripple_count", active_ripples.size())
-
-	# ── Touch interactions ──────────────────────────────────────────────
-	var interactions := get_parent().get_node_or_null("Interactions")
-	if not interactions:
-		return
-
-	var current : Dictionary = {}
-
-	for touch in interactions.get_children():
-		var id  : int     = touch.get_instance_id()
-		# indicator.position = screen_pos - pivot_offset, so add pivot to get actual centre
-		var screen_pos : Vector2 = touch.position + touch.pivot_offset
-		var uv         : Vector2 = clamp(screen_pos / vp, Vector2(0.01, 0.01), Vector2(0.99, 0.99))
-		current[id] = true
-
-		if not prev_positions.has(id):
-			# Finger just landed — strong initial splash
-			spawn_ripple(uv, 1.3 + _audio_smooth * 0.6)
-		else:
-			var moved : float = screen_pos.distance_to(prev_positions[id])
-			if moved > MOVE_THRESHOLD:
-				# Moving finger — lighter trail ripples, strength from speed + audio
-				spawn_ripple(uv, 0.45 + moved / 100.0 + _audio_smooth * 0.3)
-
-		prev_positions[id] = screen_pos
-
-	# Clean up IDs for fingers that have lifted
-	var to_remove : Array = []
-	for id in prev_positions:
-		if not current.has(id):
-			to_remove.append(id)
-	for id in to_remove:
-		prev_positions.erase(id)

@@ -8,6 +8,7 @@ signal interaction_received(id: int, pos: Vector2, state: String, metadata: Dict
 signal remote_command(cmd: Dictionary)
 signal hand_skeleton_received(hands: Array)
 signal track_mode_changed(mode: String)
+signal frame_motion_received(amount: float, points: Array)
 
 func _ready():
 	peer = PacketPeerUDP.new()
@@ -44,16 +45,20 @@ func _parse_json_packet(packet: PackedByteArray, sender_ip: String = ""):
 			var id_value = data.get("id")
 			var x_value = data.get("x")
 			var y_value = data.get("y")
-			if typeof(id_value) != TYPE_INT:
+			if typeof(id_value) != TYPE_INT and typeof(id_value) != TYPE_FLOAT:
+				return
+			if not is_finite(float(id_value)) or id_value < 0 or id_value > 2147483647 or floor(float(id_value)) != float(id_value):
 				return
 			var invalid_x = typeof(x_value) != TYPE_INT and typeof(x_value) != TYPE_FLOAT
 			var invalid_y = typeof(y_value) != TYPE_INT and typeof(y_value) != TYPE_FLOAT
 			if invalid_x or invalid_y:
 				return
+			if not is_finite(float(x_value)) or not is_finite(float(y_value)):
+				return
 			if x_value < 0.0 or x_value > 1.0 or y_value < 0.0 or y_value > 1.0:
 				return
 			var pos = Vector2(float(x_value), float(y_value))
-			interaction_received.emit(id_value, pos, str(data.get("event", data.get("state", "move"))), data)
+			interaction_received.emit(int(id_value), pos, str(data.get("event", data.get("state", "move"))), data)
 		"command":
 			if typeof(data.get("cmd", "")) == TYPE_STRING:
 				_remote_host = sender_ip
@@ -61,6 +66,25 @@ func _parse_json_packet(packet: PackedByteArray, sender_ip: String = ""):
 		"hand_skeleton":
 			if typeof(data.get("hands", [])) == TYPE_ARRAY:
 				hand_skeleton_received.emit(data.get("hands", []))
+		"frame_motion":
+			var amount = data.get("amount")
+			var points = data.get("points")
+			if (typeof(amount) != TYPE_INT and typeof(amount) != TYPE_FLOAT) or not is_finite(float(amount)):
+				return
+			if typeof(points) != TYPE_ARRAY or points.size() > 8:
+				return
+			var valid_points: Array = []
+			for point in points:
+				if typeof(point) != TYPE_DICTIONARY:
+					return
+				var x = point.get("x")
+				var y = point.get("y")
+				if (typeof(x) != TYPE_INT and typeof(x) != TYPE_FLOAT) or (typeof(y) != TYPE_INT and typeof(y) != TYPE_FLOAT):
+					return
+				if not is_finite(float(x)) or not is_finite(float(y)) or x < 0.0 or x > 1.0 or y < 0.0 or y > 1.0:
+					return
+				valid_points.append(Vector2(float(x), float(y)))
+			frame_motion_received.emit(clampf(float(amount), 0.0, 1.0), valid_points)
 		"track_mode_change":
 			if typeof(data.get("mode", "")) == TYPE_STRING:
 				track_mode_changed.emit(data.mode)

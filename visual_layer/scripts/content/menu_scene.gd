@@ -273,7 +273,7 @@ func _process(delta: float) -> void:
 	var pts : Array = []
 	if interactions:
 		for c in interactions.get_children():
-			pts.append(c.global_position)
+			pts.append(c.global_position + c.pivot_offset)
 
 	for i in range(_card_rects.size()):
 		var hovered : bool = false

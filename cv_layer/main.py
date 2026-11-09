@@ -8,6 +8,7 @@ from calibration    import Calibration
 from control_window import ControlWindow, TRACKER_NAMES, SMOOTH_LABELS
 from smoothing      import KalmanSmoother, ExponentialSmoother
 from tracking       import TrackingManager, InteractionEventGenerator
+from frame_motion   import FrameMotion
 from web_remote     import ControlState, WebRemote
 from trackers       import (
     HandTracker, BlobTracker, MotionTracker,
@@ -35,6 +36,7 @@ class LightTableCV:
         self.ema         = ExponentialSmoother(alpha=0.35)
         self.tracking    = TrackingManager()
         self.interactions = InteractionEventGenerator()
+        self.frame_motion = FrameMotion()
 
         self._tracker_idx  = 0
         self._cam_idx      = 0
@@ -48,6 +50,7 @@ class LightTableCV:
         self._last_udp_ok = None
         self._tracker_error = None
         self._camera_connected = False
+        self._motion_enabled = False
 
         # Phone web remote
         self._ctrl_state = ControlState()
@@ -95,6 +98,14 @@ class LightTableCV:
     def _send_event(self, event, pointers=True):
         event["pointers"] = pointers
         self._send(event)
+
+    def _normalize_point(self, x, y):
+        x, y = self.calibration.apply(x, y)
+        if self.calibration.state == Calibration.CALIBRATED:
+            width, height = self.calibration.target_size
+        else:
+            width, height = self._current_res
+        return float(np.clip(x / width, 0.0, 1.0)), float(np.clip(y / height, 0.0, 1.0))
 
     # ------------------------------------------------------------------
     # Smoothing
@@ -194,13 +205,7 @@ class LightTableCV:
         # 5. Convert stabilized detections to normalized interaction points.
         normalized = []
         for detection in detections:
-            x, y = self.calibration.apply(detection["x"], detection["y"])
-            if self.calibration.state == Calibration.CALIBRATED:
-                target_w, target_h = self.calibration.target_size
-                x, y = x / target_w, y / target_h
-            else:
-                width, height = self._current_res
-                x, y = x / width, y / height
+            x, y = self._normalize_point(detection["x"], detection["y"])
             point = {
                 "id": detection["id"],
                 "x": float(np.clip(x, 0.0, 1.0)),
@@ -217,6 +222,26 @@ class LightTableCV:
         for event in self.interactions.update(interaction_points, timestamp):
             self._send_event(event, settings.get("Pointers", True))
 
+        motion_enabled = settings.get("Frame Motion", True) and self.calibration.state not in (
+            Calibration.SELECTING, Calibration.VALIDATING
+        )
+        if motion_enabled:
+            region = self.calibration.points if self.calibration.state == Calibration.CALIBRATED else None
+            motion = self.frame_motion.update(
+                frame, timestamp, settings.get("Motion Threshold", 25),
+                settings.get("Motion Min Percent", 1), region,
+            )
+            if motion is not None:
+                points = []
+                for x, y in motion["points"]:
+                    nx, ny = self._normalize_point(x, y)
+                    points.append({"x": nx, "y": ny})
+                self._send({"type": "frame_motion", "amount": motion["amount"], "points": points})
+        elif self._motion_enabled:
+            self.frame_motion.reset()
+            self._send({"type": "frame_motion", "amount": 0.0, "points": []})
+        self._motion_enabled = motion_enabled
+
         # 6. Send hand skeleton landmarks (HandTracker only, throttled to ~20 fps)
         if isinstance(self.tracker, HandTracker):
             now = time.time()
@@ -226,8 +251,12 @@ class LightTableCV:
                 if res and res.multi_hand_landmarks:
                     hands_out = []
                     for lm in res.multi_hand_landmarks:
-                        pts = [{"x": round(pt.x, 4), "y": round(pt.y, 4)}
-                               for pt in lm.landmark]
+                        pts = []
+                        for pt in lm.landmark:
+                            x, y = self._normalize_point(
+                                pt.x * self._current_res[0], pt.y * self._current_res[1]
+                            )
+                            pts.append({"x": round(x, 4), "y": round(y, 4)})
                         hands_out.append(pts)
                     self._send({"type": "hand_skeleton", "hands": hands_out})
                 else:
@@ -242,6 +271,7 @@ class LightTableCV:
         return display
 
     def _calibration_action(self, action):
+        self.frame_motion.reset()
         if action == "start":
             self.calibration.start()
         elif action == "undo":
@@ -267,6 +297,7 @@ class LightTableCV:
             self._cam_idx, source_size, self._current_res, settings["Flip H"]
         )
         if signature != self.calibration.signature:
+            self.frame_motion.reset()
             for event in self.interactions.close_all(time.monotonic()):
                 self._send_event(event, settings.get("Pointers", True))
             self.calibration.set_context(signature)
@@ -469,6 +500,8 @@ class LightTableCV:
             if not ok:
                 print(f"[Camera] Lost frame from camera {self._cam_idx}; retrying.")
                 self._camera_connected = False
+                self.frame_motion.reset()
+                self._send({"type": "frame_motion", "amount": 0.0, "points": []})
                 for event in self.interactions.close_all(time.monotonic()):
                     self._send_event(event, settings.get("Pointers", True))
                 self.tracking.reset()

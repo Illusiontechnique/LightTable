@@ -25,9 +25,12 @@ class TrackingManager:
         pairs = []
         for detection_index, detection in enumerate(detections):
             for track_id, track in active.items():
+                if detection.get("tracking_group") != track.get("tracking_group"):
+                    continue
+                anchor = detection.get("tracking_anchor", (detection["x"], detection["y"]))
                 distance = math.hypot(
-                    float(detection["x"]) - track["x"],
-                    float(detection["y"]) - track["y"],
+                    float(anchor[0]) - track["anchor"][0],
+                    float(anchor[1]) - track["anchor"][1],
                 )
                 if distance <= self.max_distance:
                     pairs.append((distance, detection_index, track_id))
@@ -64,6 +67,8 @@ class TrackingManager:
                 "x": float(detection["x"]),
                 "y": float(detection["y"]),
                 "timestamp": timestamp,
+                "anchor": detection.get("tracking_anchor", (float(detection["x"]), float(detection["y"]))),
+                "tracking_group": detection.get("tracking_group"),
             }
         for track_id in expired:
             self._tracks.pop(track_id, None)

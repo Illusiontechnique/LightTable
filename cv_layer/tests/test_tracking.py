@@ -35,6 +35,19 @@ class TrackingTests(unittest.TestCase):
         next_detection, _ = manager.update([{"x": 20, "y": 30}], 0.7)
         self.assertNotEqual(next_detection[0]["id"], tracked[0]["id"])
 
+    def test_fingertip_ids_follow_group_and_hand_anchor_when_tips_cross(self):
+        manager = TrackingManager()
+        first, _ = manager.update([
+            {"x": 20, "y": 30, "tracking_anchor": (30, 50), "tracking_group": 8},
+            {"x": 40, "y": 30, "tracking_anchor": (30, 50), "tracking_group": 12},
+        ], 0.0)
+        second, _ = manager.update([
+            {"x": 20, "y": 30, "tracking_anchor": (31, 50), "tracking_group": 12},
+            {"x": 40, "y": 30, "tracking_anchor": (31, 50), "tracking_group": 8},
+        ], 0.1)
+        self.assertEqual({d["tracking_group"]: d["id"] for d in first},
+                         {d["tracking_group"]: d["id"] for d in second})
+
     def test_events_include_lifecycle_dwell_swipe_velocity_and_expiry(self):
         events = InteractionEventGenerator(lost_after=0.5, dwell_after=0.5)
         self.assertEqual(events.update(

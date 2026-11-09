@@ -39,6 +39,11 @@ var audio_ceiling_slider: HSlider
 var console_toggle_button: Button
 var console_visible := true
 var active_scene_label := "Not confirmed"
+const SIMULATION_ID := -1
+const INTERACTION_TIMEOUT := 1.0
+var _interaction_seen: Dictionary = {}
+var frame_motion_amount := 0.0
+var _frame_motion_received_at := 0.0
 
 # Simple interaction visualizer (circles that appear at hand positions)
 func _ready():
@@ -47,6 +52,7 @@ func _ready():
 		log_message("Error connecting signal!")
 	receiver.remote_command.connect(_on_remote_command)
 	receiver.hand_skeleton_received.connect(_on_hand_skeleton_received)
+	receiver.frame_motion_received.connect(_on_frame_motion_received)
 	receiver.track_mode_changed.connect(_on_track_mode_changed)
 	LTQuality.quality_changed.connect(_on_quality_changed)
 
@@ -76,6 +82,14 @@ func _ready():
 	log_message("System Ready.")
 
 func _process(delta):
+	var now := Time.get_ticks_msec() * 0.001
+	for id in _interaction_seen.keys():
+		if now - _interaction_seen[id] > INTERACTION_TIMEOUT:
+			_on_interaction_received(id, Vector2.ZERO, "exit")
+	if now - _frame_motion_received_at > 0.5:
+		frame_motion_amount = 0.0
+	if active_scene and active_scene.has_method("set_motion_amount"):
+		active_scene.call("set_motion_amount", frame_motion_amount)
 	welcome_timer += delta
 	update_audio_sensor()
 	if active_scene and active_scene.has_method("set_audio_level"):
@@ -652,6 +666,8 @@ func _on_restart_cam_pressed():
 
 func _on_sim_toggled(button_pressed):
 	simulation_mode = button_pressed
+	if not button_pressed:
+		_on_interaction_received(SIMULATION_ID, Vector2.ZERO, "exit")
 	log_message("Simulation Mode: " + str(button_pressed))
 
 func log_message(msg: String):
@@ -677,6 +693,7 @@ func _input(event):
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
 		if hand_skeleton_overlay:
 			hand_skeleton_overlay.show_skeleton = !hand_skeleton_overlay.show_skeleton
+			hand_skeleton_overlay.queue_redraw()
 
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_LEFT:
 		if scene_list.size() > 0:
@@ -706,10 +723,12 @@ func _input(event):
 			if output_panel.get_global_rect().has_point(event.position):
 				var local_pos = event.position - output_panel.global_position
 				var normalized_pos = local_pos / output_panel.size
-				_on_interaction_received(99, normalized_pos, "move")
+				_on_interaction_received(SIMULATION_ID, normalized_pos, "move")
+			else:
+				_on_interaction_received(SIMULATION_ID, Vector2.ZERO, "exit")
 		else:
 			var normalized_pos = event.position / get_viewport_rect().size
-			_on_interaction_received(99, normalized_pos, "move")
+			_on_interaction_received(SIMULATION_ID, normalized_pos, "move")
 
 func toggle_console_visibility():
 	set_console_visible(not console_visible)
@@ -725,6 +744,7 @@ func refresh_console_toggle_label():
 		console_toggle_button.text = "Hide Console" if console_visible else "Show Console"
 
 func _on_clear_interactions_pressed():
+	_interaction_seen.clear()
 	for c in interaction_container.get_children():
 		c.queue_free()
 	for point in hand_points_container.get_children():
@@ -762,15 +782,20 @@ func _on_remote_command(cmd: Dictionary) -> void:
 
 func _on_interaction_received(id: int, pos: Vector2, state: String, metadata: Dictionary = {}):
 	if state == "exit":
+		_interaction_seen.erase(id)
 		var old_indicator = interaction_container.get_node_or_null(str(id))
 		if old_indicator:
+			interaction_container.remove_child(old_indicator)
 			old_indicator.queue_free()
 		var old_point = hand_points_container.get_node_or_null(str(id))
 		if old_point:
+			hand_points_container.remove_child(old_point)
 			old_point.queue_free()
 		if cursor_draw_layer:
 			cursor_draw_layer.remove_cursor(id)
 		return
+	if id != SIMULATION_ID:
+		_interaction_seen[id] = Time.get_ticks_msec() * 0.001
 
 	# Map normalized 0-1 to screen size
 	var screen_pos = pos * get_viewport_rect().size
@@ -802,7 +827,7 @@ func _on_interaction_received(id: int, pos: Vector2, state: String, metadata: Di
 	
 	dev_point.position = pos * cam_rect.size - Vector2(5, 5)
 	
-	if id != 99 and state == "enter":
+	if id != SIMULATION_ID and state == "enter":
 		log_message("Interaction Enter: ID " + str(id))
 		LTLog.event("touch", {"id": id, "x": snapped(pos.x, 0.001), "y": snapped(pos.y, 0.001)})
 
@@ -830,6 +855,12 @@ func _show_mode_toast(text: String):
 func _on_hand_skeleton_received(hands: Array) -> void:
 	if hand_skeleton_overlay:
 		hand_skeleton_overlay.update_hands(hands)
+
+func _on_frame_motion_received(amount: float, points: Array) -> void:
+	frame_motion_amount = amount
+	_frame_motion_received_at = Time.get_ticks_msec() * 0.001
+	if active_scene and active_scene.has_method("on_frame_motion"):
+		active_scene.call("on_frame_motion", amount, points)
 
 
 # ─── Cursor draw layer ────────────────────────────────────────────────────────

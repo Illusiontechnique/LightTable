@@ -6,6 +6,7 @@ from .base_tracker import BaseTracker
 
 # Palm-base landmarks used for palm-center calculation
 _PALM_LM = [0, 5, 9, 13, 17]
+_FINGERTIPS = (4, 8, 12, 16, 20)
 
 
 class HandTracker(BaseTracker):
@@ -15,6 +16,7 @@ class HandTracker(BaseTracker):
       0 = palm centre
       1 = palm centre, switching to the index tip for an isolated pointing finger
       2 = always the index fingertip
+      3 = all five fingertips
     """
 
     name = "MediaPipe Hands"
@@ -135,7 +137,22 @@ class HandTracker(BaseTracker):
         detections = []
         if self._last_results.multi_hand_landmarks:
             for i, lm in enumerate(self._last_results.multi_hand_landmarks):
-                detections.append(self._target_for_hand(i, lm, w, h))
+                if self._target_mode == 3:
+                    anchor = self._palm_center(lm, w, h)
+                    for landmark_index in _FINGERTIPS:
+                        tip = lm.landmark[landmark_index]
+                        detections.append({
+                            "id": i, "x": tip.x * w, "y": tip.y * h,
+                            "tracking_anchor": anchor, "tracking_group": landmark_index,
+                            "target": "fingertip",
+                        })
+                else:
+                    detections.append(self._target_for_hand(i, lm, w, h))
+            count = len(self._last_results.multi_hand_landmarks)
+            for states in (self._pose_by_hand, self._pose_candidate, self._pose_candidate_frames):
+                for index in list(states):
+                    if index >= count:
+                        states.pop(index)
         else:
             self._pose_by_hand.clear()
             self._pose_candidate.clear()
@@ -157,6 +174,14 @@ class HandTracker(BaseTracker):
                 cv2.circle(frame, (int(palm_pos[0]), int(palm_pos[1])), 7, (255, 180, 0), -1)
                 cv2.circle(frame, index_pos, 8, (0, 220, 255), -1)
                 cv2.circle(frame, index_pos, 11, (255, 255, 255), 1)
+                if self._target_mode == 3:
+                    for index in _FINGERTIPS:
+                        tip = lm.landmark[index]
+                        cv2.drawMarker(frame, (int(tip.x * w), int(tip.y * h)),
+                                       (0, 255, 0), cv2.MARKER_CROSS, 18, 2)
+                    cv2.putText(frame, "ALL FINGERTIPS", (int(palm_pos[0]) + 8, int(palm_pos[1]) - 8),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
+                    continue
                 target = index_pos if use_index else palm_pos
                 cv2.drawMarker(
                     frame, (int(target[0]), int(target[1])), (0, 255, 0),
@@ -177,7 +202,7 @@ class HandTracker(BaseTracker):
             {"name": "Track Conf",   "max": 100, "default": 50},
             {"name": "Max Hands",    "max": 6,   "default": 4},
             {"name": "Draw Skel",    "max": 1,   "default": 1},
-            {"name": "Target Mode",  "max": 2,   "default": 1},
+            {"name": "Target Mode",  "max": 3,   "default": 1},
         ]
 
     def on_trackbar(self, name, value):
@@ -185,7 +210,7 @@ class HandTracker(BaseTracker):
         elif name == "Track Conf":   self._track_conf   = max(1, value); self._init_hands()
         elif name == "Max Hands":    self._max_hands    = max(1, value); self._init_hands()
         elif name == "Draw Skel":    self._draw_skel    = value
-        elif name == "Target Mode":  self._target_mode = max(0, min(2, value))
+        elif name == "Target Mode":  self._target_mode = max(0, min(3, value))
 
     def reset(self):
         self._last_results = None

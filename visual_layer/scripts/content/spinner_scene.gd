@@ -22,6 +22,7 @@ const AUDIO_PULSE      := 0.28   # how much audio pumps the radius
 
 var vp_size     : Vector2
 var audio_level : float = 0.0
+var motion_amount : float = 0.0
 var _audio_sm   : float = 0.0
 
 # Dictionary: touch_id → spinner dict
@@ -154,6 +155,12 @@ func _remove_spinner(id: int) -> void:
 func set_audio_level(level: float) -> void:
 	audio_level = clamp(level, 0.0, 1.0)
 
+func set_motion_amount(amount: float) -> void:
+	motion_amount = clampf(amount, 0.0, 1.0)
+	if motion_amount > 0.01 and spinners.is_empty():
+		spinners[-1] = _make_spinner(-1, vp_size * 0.5)
+		spinners[-1]["omega"] = 0.1
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 func _process(delta: float) -> void:
@@ -198,6 +205,7 @@ func _process(delta: float) -> void:
 	for id in spinners:
 		var sp   : Dictionary = spinners[id]
 		var root : Node2D     = sp["root"]
+		sp["omega"] += motion_amount * 8.0 * delta
 
 		# --- Position: orbit around attractor if no active touch -------
 		if active_ids.has(id):

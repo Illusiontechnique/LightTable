@@ -1,5 +1,8 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import Mock
+
+import numpy as np
 
 from trackers.hand_tracker import HandTracker
 
@@ -61,6 +64,15 @@ class HandTrackingTests(unittest.TestCase):
         index = make_tracker(target_mode=2)._target_for_hand(0, hand, 640, 480)
         self.assertEqual(palm["target"], "palm")
         self.assertEqual(index["target"], "index")
+
+    def test_all_fingertips_generate_five_independent_targets(self):
+        tracker = make_tracker(target_mode=3)
+        tracker.hands = SimpleNamespace(process=Mock(return_value=SimpleNamespace(
+            multi_hand_landmarks=[make_hand()]
+        )))
+        detections = tracker.process(np.zeros((480, 640, 3), dtype=np.uint8))
+        self.assertEqual([item["tracking_group"] for item in detections], [4, 8, 12, 16, 20])
+        self.assertEqual(len({item["tracking_anchor"] for item in detections}), 1)
 
 
 if __name__ == "__main__":
