@@ -5,7 +5,7 @@ import numpy as np
 
 
 class FrameMotion:
-    def __init__(self, size=(160, 120), max_points=8, interval=0.1):
+    def __init__(self, size=(160, 120), max_points=8, interval=0.05):
         self.size = size
         self.max_points = max_points
         self.interval = interval
@@ -14,6 +14,23 @@ class FrameMotion:
     def reset(self):
         self.previous = None
         self.last_time = None
+        self.latest_intensity = np.zeros((self.size[1], self.size[0]), np.uint8)
+
+    def projection_frame(self, frame_size, calibration_matrix=None, target_size=None):
+        """Return the intensity map in projector coordinates, without changing JSON points."""
+        if calibration_matrix is None:
+            return self.latest_intensity.tobytes()
+        width, height = self.size
+        source_w, source_h = frame_size
+        target_w, target_h = target_size
+        to_source = np.diag([source_w / width, source_h / height, 1.0])
+        to_output = np.diag([width / target_w, height / target_h, 1.0])
+        matrix = to_output @ calibration_matrix @ to_source
+        warped = cv2.warpPerspective(
+            self.latest_intensity, matrix, self.size,
+            flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0,
+        )
+        return warped.tobytes()
 
     def update(self, frame, timestamp, threshold=25, min_percent=1, region=None):
         if self.last_time is not None and timestamp - self.last_time < self.interval:
@@ -24,6 +41,7 @@ class FrameMotion:
         previous = self.previous
         self.previous, self.last_time = gray, timestamp
         if previous is None:
+            self.latest_intensity.fill(0)
             return {"amount": 0.0, "points": []}
 
         diff = cv2.absdiff(gray, previous)
@@ -42,7 +60,9 @@ class FrameMotion:
         valid_pixels = max(1, cv2.countNonZero(region_mask))
         amount = cv2.countNonZero(mask) / valid_pixels
         if amount * 100 < min_percent:
+            self.latest_intensity.fill(0)
             return {"amount": 0.0, "points": []}
+        self.latest_intensity = cv2.bitwise_and(diff, mask)
 
         # Sample the boundary of changed regions in spatial tiles, rather than
         # sending one centroid for the entire moving object.

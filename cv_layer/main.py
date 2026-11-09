@@ -99,6 +99,20 @@ class LightTableCV:
         event["pointers"] = pointers
         self._send(event)
 
+    def _send_motion_frame(self):
+        calibrated = self.calibration.state == Calibration.CALIBRATED
+        data = self.frame_motion.projection_frame(
+            self._current_res,
+            self.calibration.matrix if calibrated else None,
+            self.calibration.target_size if calibrated else None,
+        )
+        try:
+            self.bridge.send_motion_frame(data)
+        except OSError as exc:
+            if self._last_udp_ok is not False:
+                print(f"[UDP] Could not send motion frame: {exc}")
+            self._last_udp_ok = False
+
     def _normalize_point(self, x, y):
         x, y = self.calibration.apply(x, y)
         if self.calibration.state == Calibration.CALIBRATED:
@@ -232,6 +246,7 @@ class LightTableCV:
                 settings.get("Motion Min Percent", 1), region,
             )
             if motion is not None:
+                self._send_motion_frame()
                 points = []
                 for x, y in motion["points"]:
                     nx, ny = self._normalize_point(x, y)
@@ -239,6 +254,7 @@ class LightTableCV:
                 self._send({"type": "frame_motion", "amount": motion["amount"], "points": points})
         elif self._motion_enabled:
             self.frame_motion.reset()
+            self._send_motion_frame()
             self._send({"type": "frame_motion", "amount": 0.0, "points": []})
         self._motion_enabled = motion_enabled
 
@@ -272,6 +288,7 @@ class LightTableCV:
 
     def _calibration_action(self, action):
         self.frame_motion.reset()
+        self._send_motion_frame()
         if action == "start":
             self.calibration.start()
         elif action == "undo":

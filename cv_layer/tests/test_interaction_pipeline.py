@@ -37,6 +37,8 @@ class InteractionPipelineTests(unittest.TestCase):
             app._processing_times = deque(maxlen=30)
             app._cam_idx = 0
             app.ui = SimpleNamespace(update_calibration_status=Mock())
+            app.bridge = SimpleNamespace(send_motion_frame=Mock())
+            app._last_udp_ok = None
             app._send = Mock()
             settings = {"Smoothing": 0, "EMA Respons": 35, "Show Mask": 0,
                         "Frame Motion": True}
@@ -54,6 +56,7 @@ class InteractionPipelineTests(unittest.TestCase):
             self.assertGreater(len(motion["points"]), 1)
             self.assertTrue(all(0 <= p["x"] <= 1 and 0 <= p["y"] <= 1
                                 for p in motion["points"]))
+            self.assertEqual(len(app.bridge.send_motion_frame.call_args.args[0]), 19200)
 
 
 if __name__ == "__main__":

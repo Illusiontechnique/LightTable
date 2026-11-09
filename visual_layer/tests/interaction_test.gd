@@ -104,26 +104,47 @@ func _run() -> void:
 	if not _check(app.load_content_scene("res://scripts/content/water_scene.gd"), "Water failed to load"):
 		return
 	var water = app.active_scene
-	receiver._parse_json_packet(JSON.stringify({
-		"type": "frame_motion", "amount": 0.2,
-		"points": [{"x": 0.25, "y": 0.5}, {"x": 0.75, "y": 0.5}]
-	}).to_utf8_buffer())
-	if not _check(water.active_ripples.size() == 2, "Frame-motion points must create water ripples"):
+	if not _check(water.simulation.bind_error == OK, "Water binary motion port must bind"):
+		return
+	_press_key(water, KEY_F3)
+	if not _check(water.debug_panel.visible, "F3 must show water debug controls"):
+		return
+	_press_key(water, KEY_3)
+	if not _check(water.simulation.test_pattern == 3, "Key 3 must select multiple-point test"):
+		return
+	_press_key(water, KEY_0)
+	if not _check(water.simulation.test_pattern == 0, "Key 0 must restore live motion"):
+		return
+	var sender := PacketPeerUDP.new()
+	sender.set_dest_address("127.0.0.1", 4242)
+	var frame := PackedByteArray()
+	frame.resize(19200)
+	frame.fill(40)
+	sender.put_packet(frame)
+	frame.fill(90)
+	sender.put_packet(frame)
+	sender.put_packet(PackedByteArray([1, 2, 3]))
+	await create_timer(0.1).timeout
+	water.simulation._receive_packets(Time.get_ticks_msec() * 0.001)
+	if not _check(water.simulation.packet_count >= 2 and water.simulation.invalid_packet_count >= 1,
+			"Binary motion receiver must accept exact frames and reject invalid packets"):
+		return
+	if not _check(water.simulation.motion_image.get_data()[0] == 90, "Receiver must retain the latest valid frame"):
 		return
 	receiver._parse_json_packet(JSON.stringify({
 		"type": "frame_motion", "amount": 0.2,
 		"points": [{"x": 0.25, "y": 0.5}, {"x": 0.75, "y": 0.5}]
 	}).to_utf8_buffer())
-	if not _check(water.active_ripples.size() == 2, "Ripple rate limit must preserve existing waves"):
-		return
 	app._on_interaction_received(1, Vector2(0.5, 0.5), "move")
-	water._process(0.016)
-	if not _check(water.active_ripples.size() == 2, "Hand or mouse points must not affect water"):
+	if not _check(not water.has_method("on_frame_motion"), "Water must not use hand or JSON point ripples"):
 		return
-	receiver._parse_json_packet(JSON.stringify({
-		"type": "frame_motion", "amount": 0.1, "points": [{"x": 2, "y": 0.5}]
-	}).to_utf8_buffer())
-	if not _check(water.active_ripples.size() == 2, "Invalid frame-motion coordinates must be rejected"):
+	water.simulation.set_test_pattern(3)
+	if not _check(water.simulation.test_pattern == 3, "Water test patterns must be selectable"):
+		return
+	sender.close()
+	if not _check(app.load_content_scene("res://scripts/content/water_scene.gd"), "Water must reload"):
+		return
+	if not _check(app.active_scene.simulation.bind_error == OK, "Water reload must release and rebind UDP"):
 		return
 	if not _check(app.load_content_scene("res://scripts/content/spinner_scene.gd"), "Spinner failed to load"):
 		return

@@ -1,131 +1,173 @@
 extends Node2D
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Water Scene
-#  Drives the stylised water shader with:
-#    • Up to 8 simultaneous ripples from camera frame differences
-#    • Audio-reactive wave energy
-#    • Correct aspect-ratio compensation passed to the shader
-# ─────────────────────────────────────────────────────────────────────────────
+const SIMULATION := preload("res://scripts/water_simulation.gd")
+const SURFACE_SHADER := preload("res://shaders/water_surface.gdshader")
+const DEBUG_SHADER := preload("res://shaders/water_height_debug.gdshader")
+const TEST_NAMES := ["Live camera", "Single impulse", "Moving point", "Multiple points", "Continuous stroke", "No-motion decay"]
 
-const MAX_RIPPLES     := 8
-const RIPPLE_LIFETIME := 3.2    # seconds before a ripple fades out completely
+@export var deep_color := Color(0.025, 0.22, 0.30)
+@export var light_color := Color(0.18, 0.58, 0.64)
+@export var background_texture: Texture2D
+@export_range(0.0, 0.1) var refraction_strength := 0.025
 
-var water_surface  : ColorRect
-var water_material : ShaderMaterial
+var simulation: Node
+var water_surface: ColorRect
+var water_material: ShaderMaterial
+var debug_panel: PanelContainer
+var debug_status: Label
+var height_preview: TextureRect
+var audio_level := 0.0
+var wave_intensity := 3.5
+var ambient_strength := 0.018
 
-# Active ripple ring-buffer.  Each entry: { pos: Vector2, age: float, strength: float }
-var active_ripples : Array = []
-var _motion_ripple_cooldown := 0.0
-var _motion_point_index := 0
-
-# Audio
-var audio_level   : float = 0.0
-var _audio_smooth : float = 0.0
-
-# ─────────────────────────────────────────────────────────────────────────────
 
 func _ready() -> void:
-	var vp_size := get_viewport_rect().size
-
-	# Dark ocean backdrop — explicit size since parent is Node2D (anchors don't apply)
-	var bg := ColorRect.new()
-	bg.color = Color(0.01, 0.03, 0.10)
-	bg.position = Vector2.ZERO
-	bg.size = vp_size
-	add_child(bg)
-	move_child(bg, 0)
-
-	# Full-screen water shader surface
+	simulation = SIMULATION.new()
+	simulation.name = "WaterSimulation"
+	add_child(simulation)
 	water_surface = ColorRect.new()
 	water_surface.name = "WaterSurface"
-	water_surface.position = Vector2.ZERO
-	water_surface.size = vp_size
+	water_surface.size = get_viewport_rect().size
+	water_surface.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	water_material = ShaderMaterial.new()
-	water_material.shader = load("res://assets/shaders/water.gdshader")
+	water_material.shader = SURFACE_SHADER
+	water_material.set_shader_parameter("deep_color", deep_color)
+	water_material.set_shader_parameter("light_color", light_color)
+	water_material.set_shader_parameter("use_background", background_texture != null)
+	water_material.set_shader_parameter("background_texture", background_texture)
+	water_material.set_shader_parameter("refraction_strength", refraction_strength)
 	water_surface.material = water_material
 	add_child(water_surface)
-
-	# Re-size on window resize
-	get_viewport().size_changed.connect(_on_viewport_size_changed)
-
-	# Prime the aspect ratio before the first frame
-	_update_aspect()
-
-	# UI labels
-	_label("WATER",                                        36, Color(0.80, 1.00, 1.00),       Vector2(24, 18))
-	_label("Move over the surface · camera motion makes ripples", 15, Color(0.70, 0.90, 1.00, 0.80), Vector2(24, 64))
+	get_viewport().size_changed.connect(_resize_surface)
+	_create_debug_panel()
 
 
-func _label(text: String, size: int, col: Color, pos: Vector2) -> void:
-	var l := Label.new()
-	l.text = text
-	l.add_theme_font_size_override("font_size", size)
-	l.modulate = col
-	l.position = pos
-	add_child(l)
+func _resize_surface() -> void:
+	water_surface.size = get_viewport_rect().size
 
-
-func _update_aspect() -> void:
-	var vp := get_viewport_rect().size
-	if vp.y > 0.0:
-		water_material.set_shader_parameter("aspect_ratio", vp.x / vp.y)
-
-
-func _on_viewport_size_changed() -> void:
-	var vp := get_viewport_rect().size
-	water_surface.size = vp
-	# Resize bg too (first child)
-	if get_child_count() > 0 and get_child(0) is ColorRect:
-		get_child(0).size = vp
-
-# ─────────────────────────────────────────────────────────────────────────────
 
 func set_audio_level(level: float) -> void:
-	audio_level = clamp(level, 0.0, 1.0)
+	audio_level = clampf(level, 0.0, 1.0)
 
-func on_frame_motion(amount: float, points: Array) -> void:
-	if points.is_empty() or _motion_ripple_cooldown > 0.0:
+
+func _process(_delta: float) -> void:
+	water_material.set_shader_parameter("height_texture", simulation.get_height_texture())
+	water_material.set_shader_parameter("texel_size", Vector2.ONE / float(simulation.simulation_resolution))
+	water_material.set_shader_parameter("wave_intensity", wave_intensity)
+	water_material.set_shader_parameter("ambient_strength", ambient_strength + audio_level * 0.006)
+	if debug_panel.visible:
+		height_preview.texture = simulation.get_height_texture()
+		debug_status.text = "Mode: %s   UDP: %.1f packets/s (%d invalid)\nGrid: %d x %d   FPS: %d   %s" % [
+			TEST_NAMES[simulation.test_pattern], simulation.packet_rate, simulation.invalid_packet_count,
+			simulation.simulation_resolution, simulation.simulation_resolution, Engine.get_frames_per_second(),
+			"Listening on 4242" if simulation.bind_error == OK else "UDP bind failed",
+		]
+
+
+func _input(event: InputEvent) -> void:
+	if not event is InputEventKey or not event.pressed or event.echo:
 		return
-	for i in mini(2, points.size()):
-		spawn_ripple(points[(_motion_point_index + i) % points.size()], 0.45 + minf(amount * 3.0, 1.0))
-	_motion_point_index = (_motion_point_index + 2) % points.size()
-	_motion_ripple_cooldown = 0.3
+	if event.keycode == KEY_F3:
+		debug_panel.visible = not debug_panel.visible
+		get_viewport().set_input_as_handled()
+	elif event.keycode >= KEY_0 and event.keycode <= KEY_5 and debug_panel.visible:
+		simulation.set_test_pattern(event.keycode - KEY_0)
+		get_viewport().set_input_as_handled()
 
 
-func spawn_ripple(uv_pos: Vector2, strength: float) -> void:
-	if active_ripples.size() >= MAX_RIPPLES:
-		active_ripples.pop_front()   # drop oldest to make room
-	active_ripples.append({
-		"pos":      uv_pos,
-		"age":      0.0,
-		"strength": clamp(strength, 0.1, 2.0),
-	})
+func _create_debug_panel() -> void:
+	debug_panel = PanelContainer.new()
+	debug_panel.name = "WaterDebug"
+	debug_panel.position = Vector2(20, 20)
+	debug_panel.custom_minimum_size = Vector2(490, 0)
+	debug_panel.visible = false
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.02, 0.04, 0.07, 0.93)
+	style.content_margin_left = 12
+	style.content_margin_right = 12
+	style.content_margin_top = 10
+	style.content_margin_bottom = 10
+	debug_panel.add_theme_stylebox_override("panel", style)
+	add_child(debug_panel)
+	var layout := VBoxContainer.new()
+	debug_panel.add_child(layout)
+	var title := Label.new()
+	title.text = "WATER DEBUG  |  F3: toggle  |  0-5: test mode"
+	layout.add_child(title)
+	debug_status = Label.new()
+	layout.add_child(debug_status)
+	var previews := HBoxContainer.new()
+	layout.add_child(previews)
+	_add_preview(previews, "Motion intensity", simulation.motion_texture, null)
+	height_preview = _add_preview(previews, "Heightfield (grey = calm)", simulation.get_height_texture(), DEBUG_SHADER)
+	var resolution_row := HBoxContainer.new()
+	layout.add_child(resolution_row)
+	var resolution_label := Label.new()
+	resolution_label.text = "Simulation grid"
+	resolution_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	resolution_row.add_child(resolution_label)
+	var selector := OptionButton.new()
+	for size in [128, 256, 512]:
+		selector.add_item(str(size), size)
+	selector.select(1)
+	selector.item_selected.connect(func(index: int): simulation.set_resolution(selector.get_item_id(index)))
+	resolution_row.add_child(selector)
+	var colors := HBoxContainer.new()
+	layout.add_child(colors)
+	for entry in [["Deep color", deep_color, "deep_color"], ["Light color", light_color, "light_color"]]:
+		var color_label := Label.new()
+		color_label.text = entry[0]
+		colors.add_child(color_label)
+		var picker := ColorPickerButton.new()
+		picker.color = entry[1]
+		picker.custom_minimum_size = Vector2(70, 28)
+		picker.color_changed.connect(_set_water_color.bind(entry[2]))
+		colors.add_child(picker)
+	_add_slider(layout, "Motion sensitivity", 0.0, 10.0, 0.1, simulation.motion_sensitivity, func(v): simulation.motion_sensitivity = v)
+	_add_slider(layout, "Impulse strength", 0.0, 0.2, 0.002, simulation.impulse_strength, func(v): simulation.impulse_strength = v)
+	_add_slider(layout, "Motion threshold", 0.0, 0.95, 0.01, simulation.motion_threshold, func(v): simulation.motion_threshold = v)
+	_add_slider(layout, "Propagation", 0.01, 0.49, 0.01, simulation.propagation, func(v): simulation.propagation = v)
+	_add_slider(layout, "Damping", 0.9, 0.999, 0.001, simulation.damping, func(v): simulation.damping = v)
+	_add_slider(layout, "Max disturbance", 0.01, 1.0, 0.01, simulation.max_disturbance, func(v): simulation.max_disturbance = v)
+	_add_slider(layout, "Wave intensity", 0.0, 10.0, 0.1, wave_intensity, func(v): wave_intensity = v)
+	_add_slider(layout, "Ambient strength", 0.0, 0.1, 0.002, ambient_strength, func(v): ambient_strength = v)
 
-# ─────────────────────────────────────────────────────────────────────────────
 
-func _process(delta: float) -> void:
-	var vp := get_viewport_rect().size
-	_motion_ripple_cooldown = maxf(0.0, _motion_ripple_cooldown - delta)
+func _add_preview(parent: Control, title: String, texture: Texture2D, shader: Shader) -> TextureRect:
+	var column := VBoxContainer.new()
+	parent.add_child(column)
+	var label := Label.new()
+	label.text = title
+	column.add_child(label)
+	var preview := TextureRect.new()
+	preview.custom_minimum_size = Vector2(220, 130)
+	preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	preview.texture = texture
+	if shader:
+		var material := ShaderMaterial.new()
+		material.shader = shader
+		preview.material = material
+	column.add_child(preview)
+	return preview
 
-	# ── Aspect ratio (update each frame in case of resize) ─────────────
-	if vp.y > 0.0:
-		water_material.set_shader_parameter("aspect_ratio", vp.x / vp.y)
 
-	# ── Audio smoothing (low-pass) ──────────────────────────────────────
-	_audio_smooth = lerp(_audio_smooth, audio_level, delta * 6.0)
-	water_material.set_shader_parameter("audio_level", _audio_smooth)
+func _add_slider(parent: Control, title: String, low: float, high: float, step: float, value: float, callback: Callable) -> void:
+	var row := HBoxContainer.new()
+	parent.add_child(row)
+	var label := Label.new()
+	label.text = title
+	label.custom_minimum_size.x = 150
+	row.add_child(label)
+	var slider := HSlider.new()
+	slider.min_value = low
+	slider.max_value = high
+	slider.step = step
+	slider.value = value
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slider.value_changed.connect(callback)
+	row.add_child(slider)
 
-	# ── Age ripples and expire old ones ────────────────────────────────
-	for r in active_ripples:
-		r["age"] += delta
-	active_ripples = active_ripples.filter(func(r): return r["age"] < RIPPLE_LIFETIME)
 
-	# ── Build uniform array (always 8 elements; inactive slots use age=-1) ──
-	var arr : Array = []
-	for r in active_ripples:
-		arr.append(Vector4(r["pos"].x, r["pos"].y, r["age"], r["strength"]))
-	while arr.size() < MAX_RIPPLES:
-		arr.append(Vector4(0.0, 0.0, -1.0, 0.0))
-	water_material.set_shader_parameter("ripples",      arr)
-	water_material.set_shader_parameter("ripple_count", active_ripples.size())
+func _set_water_color(color: Color, parameter: String) -> void:
+	water_material.set_shader_parameter(parameter, color)

@@ -33,6 +33,7 @@ With the Godot window focused, press **Space** to show or hide the shortcut list
 | Up / Down | Increase / decrease quality |
 | Tab | Toggle dashboard |
 | C | Toggle console |
+| F3 | Toggle water debug controls (in the Water scene) |
 | Esc | Quit Godot |
 
 In the interactive menu, hold a pointer over a card for 2.2 seconds to select it.
@@ -56,7 +57,13 @@ For MediaPipe Hands, use **Target Mode** in the CV panel: `0` follows the palm, 
 
 Mouse simulation and camera points use the same scene interaction path. Turn off **Mouse Simulation** in Godot when testing the camera so the mouse does not leave an extra pointer. Calibrate for accurate positioning. The water scene is deliberately different: it responds only to frame-difference motion, not hand points or the simulated mouse.
 
-**Frame Motion** runs independently of the selected tracker. It compares successive downscaled camera frames, measures the fraction of changed pixels, and sends up to eight sampled motion-boundary points. Water uses these points to spawn a bounded number of ripples; the spinner can use overall motion energy even without a hand pointer. In the CV panel, enable/disable frame differencing, raise **Threshold** to reject small brightness changes, and raise **Min area %** to reject small moving regions. When calibrated, analysis is restricted to the calibrated surface. Changing projector imagery, lighting, or camera movement can still produce false motion; tune the controls for the installation.
+**Frame Motion** runs independently of the selected tracker. It compares successive downscaled camera frames, measures changed pixels, and sends motion-boundary points for other scenes and a separate intensity image for water. The spinner can use overall motion energy even without a hand pointer. In the CV panel, enable/disable frame differencing, raise **Threshold** to reject small brightness changes, and raise **Min area %** to reject small moving regions. When calibrated, analysis is restricted to the calibrated surface. Changing projector imagery, lighting, or camera movement can still produce false motion; tune the controls for the installation.
+
+## Interactive water
+
+The Water scene uses a GPU heightfield with two alternating HDR simulation buffers, independent of display resolution. A 160 × 120 grayscale intensity frame is sent to UDP port **4242** at up to 20 Hz; Python warps it into projector coordinates using the active calibration before sending it. Without calibration the whole camera frame maps to the screen, so calibrate for accurate placement. Each datagram is exactly 19,200 bytes; an external sender must also supply **projector-aligned**, row-major 8-bit intensity, not optical flow. Keep the existing JSON port 7000 available as well.
+
+In the Water scene press **F3** for the motion image, heightfield, packet rate, FPS, grid size, and tuning controls. Press **Tab** to hide the dashboard if it covers the controls. With the debug panel open, use **0** for live camera, **1** for a single impulse, **2** for a moving point, **3** for multiple points, **4** for a continuous stroke, and **5** for no-motion decay. Press 1 again to generate another impulse. Test modes ignore camera disturbances until 0 is selected. The debug panel adjusts sensitivity, impulse, threshold, propagation, damping, maximum disturbance, colors, appearance, and the 128/256/512 grid; changing grid clears the simulation. These settings are session-only. An optional background texture can be supplied through the water scene's exported `background_texture` property. The simulation requires a renderer supporting HDR 2D (Forward+ or Mobile).
 
 Each interaction datagram retains the existing envelope and `state` field and adds an `event` alias. Velocity and direction are optional:
 
@@ -79,7 +86,7 @@ Coordinates are normalized to `[0, 1]`; `timestamp` is monotonic process time. L
 
 The web remote scene display uses Godot acknowledgements/status packets rather than treating a sent UDP request as proof that a scene loaded. Godot status returns over UDP port 7001; the receiver continues to accept interaction/control packets on port 7000.
 
-The additional `frame_motion` datagram has `amount` (changed-pixel fraction from 0 to 1) and `points` (up to eight normalized `{"x", "y"}` boundary samples). Scenes may implement `on_frame_motion(amount, points)` and/or `set_motion_amount(amount)`; the latter returns to zero if updates stop. This is visual change, not a contact or gesture event.
+The additional JSON `frame_motion` datagram has `amount` (changed-pixel fraction from 0 to 1) and `points` (up to eight normalized `{"x", "y"}` boundary samples). Scenes may implement `on_frame_motion(amount, points)` and/or `set_motion_amount(amount)`; the latter returns to zero if updates stop. Water instead consumes the separate binary intensity stream. Both represent visual change, not contact or gestures.
 
 ## Tests
 
@@ -92,5 +99,7 @@ python -m unittest discover -s tests -v
 Tests cover calibration geometry/transforms/profile compatibility/recovery, tracking identity and expiration, interaction lifecycle, remote config and control validation, player selection, scene confirmation, and mockable camera switching. Camera/projector alignment, real camera disconnect/reconnect, MediaPipe performance, and Godot rendering still require hardware or a running Godot instance for end-to-end validation.
 
 To exercise Godot's interaction receiver, simulation parity, water, and spinner without hardware, run `godot --headless --path visual_layer --script res://tests/interaction_test.gd` (use the Godot console executable on Windows).
+
+For GPU propagation, decay, simultaneous disturbances, binary UDP input, and presentation checks, run `godot --path visual_layer --fixed-fps 60 --disable-vsync --script res://tests/water_gpu_test.gd` with a working graphical display and Forward+ renderer. This test performs GPU readback for verification only; the running simulation does not.
 
 For Python dependency and remote settings details, see [CONFIGURATION.md](./CONFIGURATION.md).

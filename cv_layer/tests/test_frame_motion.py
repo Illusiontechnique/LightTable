@@ -15,7 +15,7 @@ class FrameMotionTests(unittest.TestCase):
         self.assertEqual(self.motion.update(self.blank, 0), {"amount": 0.0, "points": []})
         frame = self.blank.copy()
         cv2.rectangle(frame, (60, 60), (160, 160), (255, 255, 255), -1)
-        self.assertIsNone(self.motion.update(frame, 0.05))
+        self.assertIsNone(self.motion.update(frame, 0.02))
         result = self.motion.update(frame, 0.1)
         self.assertGreater(result["amount"], 0.1)
         self.assertLessEqual(len(result["points"]), 8)
@@ -39,6 +39,21 @@ class FrameMotionTests(unittest.TestCase):
                          {"amount": 0.0, "points": []})
         self.motion.reset()
         self.assertEqual(self.motion.update(self.blank, 0.2), {"amount": 0.0, "points": []})
+
+    def test_motion_frame_has_intensity_and_projection_alignment(self):
+        self.motion.update(self.blank, 0)
+        frame = self.blank.copy()
+        cv2.rectangle(frame, (60, 60), (100, 100), (255, 255, 255), -1)
+        self.motion.update(frame, 0.1)
+        raw = np.frombuffer(self.motion.projection_frame((320, 240)), dtype=np.uint8).reshape(120, 160)
+        matrix = np.array([[2, 0, 320], [0, 2, 0], [0, 0, 1]], dtype=np.float64)
+        warped = np.frombuffer(
+            self.motion.projection_frame((320, 240), matrix, (640, 480)), dtype=np.uint8
+        ).reshape(120, 160)
+        self.assertEqual(raw.size, 19200)
+        self.assertGreater(raw[40, 40], 0)
+        self.assertGreater(warped[40, 120], 0)
+        self.assertEqual(warped[40, 40], 0)
 
 
 if __name__ == "__main__":

@@ -597,6 +597,7 @@ func load_content_scene(script_path: String):
 		log_message("Scene load failed: " + script_path)
 		return false
 	if active_scene:
+		remove_child(active_scene)
 		active_scene.queue_free()
 	
 	var new_node = Node2D.new()
@@ -699,7 +700,7 @@ func _setup_shortcuts_panel() -> void:
 	var label := Label.new()
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.add_theme_font_size_override("font_size", 20)
-	label.text = "KEYBOARD SHORTCUTS\n\nSpace  Show / hide this list\nT  Show / hide pointers\nY  Show / hide hand skeleton\nLeft / Right  Previous / next scene\nUp / Down  Increase / decrease quality\nTab  Show / hide dashboard\nC  Show / hide console\nEsc  Quit"
+	label.text = "KEYBOARD SHORTCUTS\n\nSpace  Show / hide this list\nT  Show / hide pointers\nY  Show / hide hand skeleton\nLeft / Right  Previous / next scene\nUp / Down  Increase / decrease quality\nTab  Show / hide dashboard\nC  Show / hide console\nF3  Water debug and test modes\nEsc  Quit"
 	shortcuts_panel.add_child(label)
 	shortcuts_panel.visible = false
 	$UI.add_child(shortcuts_panel)
